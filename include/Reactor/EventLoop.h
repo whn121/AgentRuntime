@@ -1,0 +1,77 @@
+#pragma once
+
+#include <sys/epoll.h>
+#include <vector>
+#include <unordered_map>
+#include <memory>
+#include <mutex>
+#include <functional>
+#include "Channel.h"
+#include <atomic> //原子操作
+#include <thread> //亲合度检测
+#include <condition_variable>
+
+
+class Connection; // 前向声明
+
+// 事件循环（每个线程一个），封装epoll，驱动所有Channel回调
+class EventLoop
+{
+public:
+    EventLoop();
+    ~EventLoop();
+    void loop();                                           // 主循环
+    void waitUntilStarted();                               //
+    void updateChannel(Channel* ch, uint32_t events);      // 添加Channel
+    void removeChannel(Channel* ch);                       // 移除Channel
+    void updateConnection(std::shared_ptr<Connection> conn); // 持有Connection
+    void removeConnection(int fd);                         // 移除并关闭
+    // 在所属 I/O 线程中发起所有现有连接的关闭流程。
+    // done 在本轮关闭请求全部发起后执行，不代表所有连接都已完成最终关闭。
+    void closeAllConnections(std::function<void()> done = {});
+    void updateChannelEvent(Channel* ch, uint32_t events); // 修改监听事件
+    bool runInLoop(std::function<void()> cb);              // 线程安全投递任务
+    void wakeUp();                                         // 唤醒epoll
+    int wakeupFd() const { return wakeup_fd_; }
+    bool acceptsConnections() const { assertInLoopThread(); return !stop_ && !closingConnections_; }
+    void stop();                                           // 停止循环
+
+    bool isInLoopThread () const; //判断是否在所属线程
+    void assertInLoopThread () const; //断言当前线程是否为所属线程
+
+    // 超时检测,减少一个线程的开销,每次io都记录时间在connection里
+    void setTimer(int interval_sec, std::function<void()> cb);
+
+private:
+    int efd_;                             // epoll实例
+    std::vector<epoll_event> events_;     // 就绪事件数组
+    std::unordered_map<int, Channel*> channels_;            // fd -> Channel
+    std::unordered_map<int, std::shared_ptr<Connection>> connections_; // 持有连接
+    bool closingConnections_ = false; // loop-thread only; closeAllConnections permanently ends admission
+    std::atomic<bool> stop_ {false}; //使用原子操作避免竞争
+
+    int wakeup_fd_;                       // eventfd，用于唤醒
+    std::vector<std::function<void()>> task_queue_; // 待执行的回调
+    std::mutex mtx_;
+
+    //暂存即将销毁的连接，延迟到本次事件循环末尾释放
+    //connections_ 中可能持有该 Connection 的最后一个 shared_ptr。一旦 erase，引用计数归零，Connection 被立即析构。
+    //但此时你仍然在 Connection::read() 函数内部，这个函数是通过 Channel 的回调调用的，
+    //而 Channel 是 Connection 的成员（unique_ptr<Channel>
+    std::vector<std::shared_ptr<Connection>> pendingConnections_;
+
+    std::thread::id owner_thread_id_; //所属线程ID
+
+    // 同步Eventloop的启动状态
+    std::mutex start_mtx_;
+    std::condition_variable start_cv_;
+    bool started_ = false;
+
+    int timerfd_ = -1; //liunx专门用来计时的,内部有计数每次到时间+1 , >0就可读
+    std::unique_ptr<Channel> timerChannel_;
+    std::function<void()> timerCallback_;
+
+    void handleTimer();
+    void checkIdleConnections(int timeout_sec);
+
+};

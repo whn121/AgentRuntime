@@ -1,0 +1,65 @@
+# ===== build folder =====
+build/
+cmake-build-*/
+build-*/
+/EchoNetGateway
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# ===== compiled objects =====
+*.o
+*.obj
+*.d
+*.a
+*.so
+*.out
+
+# ===== system files =====
+.DS_Store
+Thumbs.db
+
+# ===== IDE =====
+.vscode/
+.idea/
+
+# QT / QtCreator
+*.user
+build_qt_out/
+*.pro.user
+*.autogen
+moc_*.cppQ
+ui_*.h
+
+# 临时测试二进制、可执行文件
+redis_text/deadlock
+redis_text/leak
+redis_text/segfault
+text_buffer
+text_channel
+text_connection
+text_eventloop
+
+# python缓存
+__pycache__/
+*.pyc
+
+# 压测客户端编译产物
+bench_cpp
+
+# 日志与打包
+echonet.log
+*.log
+*.tar.gz
+
+# 运行时数据
+data/
+Logger_txt/
+
+.env

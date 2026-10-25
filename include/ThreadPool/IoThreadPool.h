@@ -1,0 +1,59 @@
+#pragma once
+
+#include "Reactor/EventLoop.h"
+#include <vector>
+#include <thread>
+#include <memory>
+#include <atomic> //对他的读写,自增,自减,操作是一起的
+#include "Task.h"
+#include <atomic>
+#include <any>
+#include <functional>
+
+
+
+// IO线程池：管理一组子EventLoop，每个循环运行在独立线程
+class IoThreadPool
+{
+public:
+    IoThreadPool(int num = 4);
+    ~IoThreadPool();
+    void submit(int afd);                              // 分发新连接
+    void setCallBack(std::function<void(Task)> cb);    // 设置工作线程池回调
+    std::function<void(Task)> getCallback();           // 获取回调
+    void stop();
+
+    // 在所有 I/O 循环中发起现有连接的关闭流程，并等待关闭请求执行。
+    void closeAllConnections();
+
+    // 等待各 I/O 循环执行调用前已排队的回调。
+    // 应在 WorkThreadPool 停止并 join 后调用。
+    void waitForPendingCallbacks();
+
+
+    void setbuildconn (std::function<std::shared_ptr<Connection> (int afd, EventLoop* loop)>);
+
+    // 业务处理函数类型：框架层不关心里面是什么业务,继续解耦io
+    using BusinessHandler = std::function<void(std::shared_ptr<Connection>, const std::any&)>;
+
+    void setBusinessHandler(BusinessHandler handler);
+    void setCloseCallback(std::function<void(int)> cb);
+
+private:
+    void worker(int idx);                              // 线程工作函数
+    std::vector<std::unique_ptr<EventLoop>> loops_;    // 子EventLoop
+    std::vector<std::thread> threads_;
+    std::atomic<bool> stop_ {false};
+    int num_;
+    std::function<void(Task)> workCallback_;           // 投递给工作线程池
+    std::atomic<size_t> next_{0};                      // 轮询计数器
+    //{}给成员就地初始化列表
+
+    //为了解耦io不知道协议类型,在acceptor里完成io执行回调
+    std::function<std::shared_ptr<Connection> (int afd, EventLoop* loop)> buildconn_;
+
+    // 接着解耦io也不知道
+    BusinessHandler businessHandler_;
+    std::function<void(int)> closeCallback_;
+
+};
