@@ -53,6 +53,7 @@ int main() {
 
     // 测试六：非法任务 ID 必须被拒绝。
     bool threw = false;
+    (void) threw;
 
     try {
         RuntimeTask invalid_task(0, "invalid");

@@ -149,8 +149,35 @@ void EventLoop::loop()
                 auto it = channels_.find(fd);
                 if (it != channels_.end())
                 {
-                    it->second->setRevents(events_[i].events);
-                    it->second->handleEvent(events_[i].events); // 执行回调
+                    Channel* ch = it -> second;
+
+                    // 一个连接的回调抛异常不能拖垮整个 loop。
+                    // 捕获后走这个连接自己的关闭流程, 其他连接照常处理。
+                    try
+                    {
+                        ch->setRevents(events_[i].events);
+                        ch->handleEvent(events_[i].events); // 执行回调
+                    }
+                    catch(const std::exception& e)
+                    {
+                        LOG_ERROR("EventLoop: handleEvent threw on fd=" + std::to_string(fd)
+                             + ": " + e.what() + ", closing connection");
+                        auto connIt = connections_.find(fd);
+                        if (connIt != connections_.end() && connIt->second)
+                        {
+                            connIt->second->close();
+                        }
+                    }
+                    catch(...)
+                    {
+                        LOG_ERROR("EventLoop: handleEvent threw unknown exception on fd="
+                            + std::to_string(fd) + ", closing connection");
+                        auto connIt = connections_.find(fd);
+                        if (connIt != connections_.end() && connIt->second)
+                        {
+                            connIt->second->close();
+                        }
+                    }
                 }
             }
         }
@@ -165,10 +192,36 @@ void EventLoop::loop()
         stop_ = true;
         remaining.swap(task_queue_);
     }
-    for (auto& task : remaining) {
+    for (auto& task : remaining) 
+    {
         try { task(); }
         catch (const std::exception& e) { LOG_ERROR("EventLoop drain failed: " + std::string(e.what())); }
         catch (...) { LOG_ERROR("EventLoop drain failed"); }
+    }
+
+    // Loop 即将退出。执行一次强制关闭兜底：
+    // 所有仍挂在 connections_ 上的连接，无论处于 Connected 还是 Closing，
+    // 都必须在 loop 线程内完成最终清理，否则 fd 永远不会被关闭。
+    // 两轮扫描：第一轮强制进入 Closing 并尝试认领；
+    // 第二轮覆盖"第一轮时 taskRunning_ == true、但任务已在本轮结束时完成"的连接。
+    for (int round = 0; round < 2; ++round)
+    {
+        std::vector<std::shared_ptr<Connection>> snapshot;
+        snapshot.reserve(connections_.size());
+
+        for (const auto& [fd, conn] : connections_)
+        {
+            if (conn) snapshot.push_back(conn);
+        }
+
+        if (snapshot.empty()) break;
+
+        for (const auto& conn : snapshot)
+        {
+            if (!conn) continue;
+            if (round == 0) conn->forceCloseOnLoopStop();
+            else            conn->finalizeCloseIfPending();
+        }
     }
 }
 
@@ -330,6 +383,26 @@ void EventLoop::closeAllConnections(std::function<void()> done)
             done();
         }
     })) { if (done) done(); }
+}
+
+void EventLoop::drainClosingConnections()
+{
+    assertInLoopThread();
+
+    // 先快照：finalizeCloseIfPending 会触发 removeConnection，
+    // 进而修改 connections_，不能在遍历原 map 时直接调用。
+    std::vector<std::shared_ptr<Connection>> snapshot;
+    snapshot.reserve(connections_.size());
+
+    for (const auto& [fd, conn] : connections_)
+    {
+        if (conn) snapshot.push_back(conn);
+    }
+
+    for (const auto& conn : snapshot)
+    {
+        if (conn) conn->finalizeCloseIfPending();
+    }
 }
 
 void EventLoop::updateChannelEvent(Channel* ch, uint32_t events)

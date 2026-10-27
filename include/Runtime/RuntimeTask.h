@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <mutex>
+#include "CancellationToken.h"
 
 
 namespace runtime
@@ -48,6 +49,9 @@ namespace runtime
         // 判断任务是否进入最终成功或失败
         bool isTerminal() const;
 
+        // 任务创建时生成的令牌, 由 RuntimeEngine 在 stop() 时取消。
+        const CancellationToken& token() const { return token_; }
+
     private:
         TaskId id_;
         std::string input_; 
@@ -59,6 +63,8 @@ namespace runtime
 
         std::string result_;
         std::string error_;
+
+        CancellationToken token_;
 
     };
 }

@@ -1,6 +1,7 @@
 
 #include "Runtime/RuntimeTask.h"
 #include "Runtime/Worker.h"
+#include "Runtime/CancellationToken.h"
 
 #include <atomic>
 #include <iostream>
@@ -14,7 +15,7 @@ int main() {
     // 统计 Executor 实际执行次数
     std::atomic<int> executorCalls{0};
 
-    Worker worker([&](const std::string& input) {
+    Worker worker([&](const std::string& input, const runtime::CancellationToken&) {
         executorCalls.fetch_add(1, std::memory_order_relaxed);
         return "processed: " + input;
     });

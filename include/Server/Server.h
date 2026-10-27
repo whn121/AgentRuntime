@@ -29,8 +29,9 @@ public:
 
     void setBeforeIoShutdownCallback(std::function<void()> cb);
 
-    // 将 Gateway 出站连接产生的业务任务提交到现有工作线程池
-    void submitWork(Task task);
+    // 将 Gateway 出站连接产生的业务任务提交到工作线程池。
+    // 返回实际提交结果；拒绝时由上层调用者处理任务。
+    TaskQueue::PushResult submitWork(Task&& task);
 
 private:
     Socket listen_socket_;               // 监听套接字

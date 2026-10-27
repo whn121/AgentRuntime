@@ -15,11 +15,22 @@ namespace runtime
     class Scheduler
     {
     public:
+
+        // 客户端标识：当前使用连接 fd。fd 会被复用，但复用时旧连接的任务
+        // 已进入终态并从队列移除，不会与新连接的任务混排。
+        using ClientId = int;    
+
         Scheduler() = default;
 
-        // 提交一个新任务。
-        // 返回 false 表示任务 ID 已存在，不覆盖已有任务。
-        bool submit(TaskId id, std::string input);
+        // clientId 用于公平调度：同一客户端的任务在自己的队列里 FIFO
+        // 不同客户端之间轮转取出
+        // 返回 false 表示：任务 ID 已存在，或该客户端的待调度队列已满
+        bool submit(TaskId id, ClientId clientId, std::string input);
+
+        // 每个客户端最多等待调度的任务数。
+        // 超过后 submit 返回 false，调用方（RuntimeEngine::submit）
+        // 将失败传播到 backend_main.cpp 的 TASK_SUBMISSION_FAILED。
+        static constexpr std::size_t MAX_PENDING_PER_CLIENT = 256;
 
         // 从 FIFO 队列取出下一个待调度任务。
         // 成功时任务状态从 PENDING 转为 SCHEDULED。
@@ -39,6 +50,7 @@ namespace runtime
         // 当前等待调度的队列长度。
         std::size_t pendingCount() const;
 
+
     private:
         // 保护tasks_和rending_queue_
         mutable std::mutex mutex_;
@@ -46,8 +58,14 @@ namespace runtime
         // shared_ptr 让外部持有任务引用时，对象不会立即销毁。
         std::unordered_map<TaskId, std::shared_ptr<RuntimeTask>> tasks_;
 
-        // 队列只存 TaskId，不重复存储任务内容。
-        // push_back + pop_front 实现 FIFO。
-        std::deque<TaskId> pending_queue_;
+        // 每个客户端一个 FIFO 队列，只存 TaskId。
+        std::unordered_map<ClientId, std::deque<TaskId>> perClientQueues_;
+
+        // 轮转顺序：队头客户端先被取出，取完后若仍有任务则移到队尾。
+        std::deque<ClientId> roundRobin_;
+
+        // 总待调度数，用于 pendingCount() 的 O(1) 返回。
+        std::size_t pendingTotal_ = 0;
+
     };
 }

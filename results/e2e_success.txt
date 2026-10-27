@@ -1,0 +1,4 @@
+端到端链路验证
+环境：WSL2 Linux，假模型服务监听 127.0.0.1:8081（兼容 OpenAI Chat Completions 格式）
+请求：RUNTIME_TASK_REQ id=1 payload="hello"
+响应：type=5 (RUNTIME_TASK_RESP) id=1 payload="hello from fake qwen"

@@ -17,7 +17,7 @@ int main()
     // Test 1: successful execution and result delivery.
     {
         runtime::RuntimeEngine engine(
-            [](const std::string& input) {
+            [](const std::string& input, const runtime::CancellationToken&) {
                 return "processed: " + input;
             },
             2, 16);
@@ -27,7 +27,7 @@ int main()
         bool completed = false;
         bool correct = false;
 
-        if (!engine.submit("hello",
+        if (!engine.submit(1, "hello",
             [&](const std::shared_ptr<runtime::RuntimeTask>& task,
                 runtime::WorkerExecutionResult result) {
                 {
@@ -64,7 +64,7 @@ int main()
     // Test 2: executor exceptions become failed tasks.
     {
         runtime::RuntimeEngine engine(
-            [](const std::string&) -> std::string {
+            [](const std::string&, const runtime::CancellationToken&) -> std::string {
                 throw std::runtime_error("simulated failure");
             },
             1, 4);
@@ -74,7 +74,7 @@ int main()
         bool completed = false;
         bool correct = false;
 
-        if (!engine.submit("fail",
+        if (!engine.submit(1, "fail",
             [&](const std::shared_ptr<runtime::RuntimeTask>& task,
                 runtime::WorkerExecutionResult result) {
                 {
@@ -103,6 +103,8 @@ int main()
     }
 
     // Test 3: pending queue capacity is enforced deterministically.
+    // 三层上限同时存在：全局 maxPendingTasks=1、单客户端 256、Worker=1。
+    // 用 clientId=1 提交全部三个任务，验证全局上限先触发。
     {
         std::mutex mutex;
         std::condition_variable cv;
@@ -110,7 +112,7 @@ int main()
         bool releaseExecutor = false;
 
         runtime::RuntimeEngine engine(
-            [&](const std::string& input) {
+            [&](const std::string& input, const runtime::CancellationToken&) {
                 std::unique_lock<std::mutex> lock(mutex);
                 executorStarted = true;
                 cv.notify_all();
@@ -119,7 +121,7 @@ int main()
             },
             1, 1);
 
-        if (!engine.submit("running", [](const auto&, auto) {})) {
+        if (!engine.submit(1, "running", [](const auto&, auto) {})) {
             std::cerr << "FAIL: first task submission\n";
             return 1;
         }
@@ -133,7 +135,7 @@ int main()
         }
 
         // The only worker is blocked; one task can now occupy the pending queue.
-        if (!engine.submit("queued", [](const auto&, auto) {})) {
+        if (!engine.submit(1, "queued", [](const auto&, auto) {})) {
             std::cerr << "FAIL: task should fit in pending queue\n";
             {
                 std::lock_guard<std::mutex> lock(mutex);
@@ -144,7 +146,7 @@ int main()
             return 1;
         }
 
-        if (engine.submit("overflow", [](const auto&, auto) {})) {
+        if (engine.submit(1, "overflow", [](const auto&, auto) {})) {
             std::cerr << "FAIL: queue accepted task beyond capacity\n";
             {
                 std::lock_guard<std::mutex> lock(mutex);
@@ -170,19 +172,22 @@ int main()
     }
 
     // Test 4: every accepted task completes when stop drains the engine.
+    // taskCount=20 < 256，单客户端也不会触发配额；使用分散 clientId
+    // 是为了让测试不隐含"单客户端独占"的假设。
     {
         constexpr int taskCount = 20;
         std::atomic<int> completed{0};
 
         runtime::RuntimeEngine engine(
-            [](const std::string& input) {
+            [](const std::string& input, const runtime::CancellationToken&) {
                 std::this_thread::sleep_for(2ms);
                 return input;
             },
             3, taskCount);
 
         for (int i = 0; i < taskCount; ++i) {
-            if (!engine.submit(std::to_string(i),
+            const int clientId = 1 + (i % 4);
+            if (!engine.submit(clientId, std::to_string(i),
                 [&](const auto&, auto) {
                     completed.fetch_add(1, std::memory_order_relaxed);
                 })) {
@@ -202,7 +207,7 @@ int main()
             return 1;
         }
 
-        if (engine.submit("after-stop", [](const auto&, auto) {})) {
+        if (engine.submit(1, "after-stop", [](const auto&, auto) {})) {
             std::cerr << "FAIL: engine accepted task after stop\n";
             return 1;
         }

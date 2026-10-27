@@ -147,9 +147,10 @@ int main(int argc, char* argv[]) try
 
     auto llamaClient = std::make_shared<runtime::LlamaClient>();
 
-    runtime::RuntimeEngine runtimeEngine([llamaClient](const std::string& input) -> std::string
+    runtime::RuntimeEngine runtimeEngine([llamaClient]
+        (const std::string& input, const runtime::CancellationToken& token) -> std::string
     {
-        return llamaClient->complete(input);
+        return llamaClient->complete(input, token);
     },
     2,       // 固定工作线程数
     1024     // 最多排队等待的任务数
@@ -199,11 +200,16 @@ int main(int argc, char* argv[]) try
             const auto requestId = request.id_;
             const auto input = request.payload_;
 
-            const bool accepted = runtimeEngine.submit(input, [conn, requestId]
+            // 以连接 fd 作为客户端标识，用于公平调度与按客户端配额。
+            const int clientId = conn->getChannel()->getFd();
+
+            const bool accepted = runtimeEngine.submit(clientId, input, [conn, requestId]
                 (const std::shared_ptr<runtime::RuntimeTask>& task, runtime::WorkerExecutionResult result)
             {
-                if (task &&
-                    result == runtime::WorkerExecutionResult::SUCCEEDED)
+                // 关闭期间连接可能已经进了 Closing, sendResponse 会静默丢掉
+                // 这是预期的, 不是 bug。见 docs/shutdown-semantics.md
+                // 别在这里加"关闭时也回最后一帧"的逻辑, 会把停服时序搞乱
+                if (task && result == runtime::WorkerExecutionResult::SUCCEEDED)
                 {
                     conn->sendResponse(MyMessage
                     {
@@ -214,10 +220,7 @@ int main(int argc, char* argv[]) try
                 }
                 else
                 {
-                    const std::string error =
-                        task && !task->error().empty()
-                            ? task->error()
-                            : "TASK_EXECUTION_FAILED";
+                    const std::string error = task && !task->error().empty() ? task->error() : "TASK_EXECUTION_FAILED";
 
                     conn->sendResponse(MyMessage
                     {

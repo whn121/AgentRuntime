@@ -1,0 +1,8 @@
+任务队列满载
+配置：maxPendingTasks=4（临时从 1024 改小以触发）
+并发：10 个独立连接同时提交，假模型服务每次响应延迟 1s
+结果：
+  - 4 个 type=5 (RUNTIME_TASK_RESP) payload="slow response"
+  - 6 个 type=6 (RUNTIME_TASK_FAILED) payload="TASK_SUBMISSION_FAILED"
+  - Backend 不崩溃，拒绝后继续服务
+说明：10 个请求中 2 个因客户端 5s socket 超时提前放弃，不计入上述统计。

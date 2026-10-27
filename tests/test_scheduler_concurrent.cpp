@@ -1,4 +1,3 @@
-
 #include "Runtime/Scheduler.h"
 
 #include <atomic>
@@ -12,7 +11,10 @@ int main() {
     Scheduler scheduler;
 
     constexpr int threadCount = 4;
-    constexpr int tasksPerThread = 1000;
+    // 每个线程对应一个独立 clientId，每客户端 tasksPerThread 个任务。
+    // tasksPerThread 必须 < Scheduler::MAX_PENDING_PER_CLIENT（256），
+    // 否则单客户端配额先于并发逻辑触发，测试目标被污染。
+    constexpr int tasksPerThread = 200;
     constexpr int totalTasks = threadCount * tasksPerThread;
 
     // 阶段 1：多个线程同时提交任务。
@@ -21,12 +23,13 @@ int main() {
 
     for (int t = 0; t < threadCount; ++t) {
         submitters.emplace_back([&, t]() {
+            const int clientId = t + 1;
             for (int i = 0; i < tasksPerThread; ++i) {
                 const TaskId id =
                     static_cast<TaskId>(t * tasksPerThread + i + 1);
 
                 if (scheduler.submit(
-                        id, "input-" + std::to_string(id))) {
+                        id, clientId, "input-" + std::to_string(id))) {
                     submitSuccess.fetch_add(
                         1, std::memory_order_relaxed);
                 }
@@ -85,4 +88,3 @@ int main() {
     std::cout << "PASS: concurrent Scheduler tests\n";
     return 0;
 }
-

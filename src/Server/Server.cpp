@@ -40,7 +40,7 @@ bool Server::start()
     acceptor_->listen();
 
     // 设置IO线程池的工作回调：将Task投递给业务线程池
-    iopool_.setCallBack([this](Task t) { workpool_.submit(std::move(t)); });
+    iopool_.setCallBack([this](Task&& task) { return workpool_.submit(std::move(task)); });
     
     // 转发业务处理器给 IoThreadPool
     if (businessHandler_) iopool_.setBusinessHandler(businessHandler_);
@@ -85,6 +85,11 @@ void Server::stop()
 
     // 4.排空已提交的业务任务
     workpool_.stop();
+
+    // 4.5 主 EventLoop 已在 start() 返回前被 SignalHandler 停止，
+    // onTaskComplete 里的 runInLoop 全部失败。此时 workpool_ 已排空，
+    // taskRunning_ 全部为 false，在主线程直接认领 pending 关闭。
+    mainloop_.drainClosingConnections();
 
     // 5. 排空 RuntimeEngine，期间 IO 线程仍可处理完成回调和响应
     if (beforeIoShutdownCallback_)
@@ -131,7 +136,7 @@ void Server::setBeforeIoShutdownCallback(std::function<void()> cb)
     beforeIoShutdownCallback_ = std::move(cb);
 }
 
-void Server::submitWork(Task task)
+TaskQueue::PushResult Server::submitWork(Task&& task)
 {
-    workpool_.submit(std::move(task));
+    return workpool_.submit(std::move(task));
 }

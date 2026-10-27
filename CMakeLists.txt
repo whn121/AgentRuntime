@@ -60,3 +60,57 @@ add_executable(test_runtime_engine tests/test_runtime_engine.cpp)
 target_link_libraries(test_runtime_engine PRIVATE echonet_core)
 target_compile_options(test_runtime_engine PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME runtime_engine COMMAND test_runtime_engine)
+
+# ───── 阶段 1a：接入其余测试源文件 ─────
+# 规则：先全部加进来构建。编译失败或运行失败的，把该测试的
+# add_executable / add_test 注释掉，旁边标注 # TODO(阶段 2): <现象>。
+# 不修改测试源码，不加 WILL_FAIL 掩盖问题。
+
+add_executable(test_scheduler tests/test_scheduler.cpp)
+target_link_libraries(test_scheduler PRIVATE echonet_core)
+target_compile_options(test_scheduler PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME scheduler COMMAND test_scheduler)
+
+add_executable(test_scheduler_concurrent tests/test_scheduler_concurrent.cpp)
+target_link_libraries(test_scheduler_concurrent PRIVATE echonet_core)
+target_compile_options(test_scheduler_concurrent PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME scheduler_concurrent COMMAND test_scheduler_concurrent)
+
+add_executable(test_task_concurrent tests/test_task_concurrent.cpp)
+target_link_libraries(test_task_concurrent PRIVATE echonet_core)
+target_compile_options(test_task_concurrent PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME task_concurrent COMMAND test_task_concurrent)
+
+add_executable(test_task_model tests/test_task_model.cpp)
+target_link_libraries(test_task_model PRIVATE echonet_core)
+target_compile_options(test_task_model PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME task_model COMMAND test_task_model)
+
+add_executable(test_worker tests/test_worker.cpp)
+target_link_libraries(test_worker PRIVATE echonet_core)
+target_compile_options(test_worker PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME worker COMMAND test_worker)
+
+add_executable(test_worker_concurrent tests/test_worker_concurrent.cpp)
+target_link_libraries(test_worker_concurrent PRIVATE echonet_core)
+target_compile_options(test_worker_concurrent PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME worker_concurrent COMMAND test_worker_concurrent)
+
+add_executable(test_close_drain tests/test_close_drain.cpp)
+target_link_libraries(test_close_drain PRIVATE echonet_core)
+target_compile_options(test_close_drain PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME close_drain COMMAND test_close_drain)
+
+add_executable(test_scheduler_fairness tests/test_scheduler_fairness.cpp)
+target_link_libraries(test_scheduler_fairness PRIVATE echonet_core)
+target_compile_options(test_scheduler_fairness PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME scheduler_fairness COMMAND test_scheduler_fairness)
+
+add_executable(test_runtime_cancel tests/test_runtime_cancel.cpp)
+target_link_libraries(test_runtime_cancel PRIVATE echonet_core)
+target_compile_options(test_runtime_cancel PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME runtime_cancel COMMAND test_runtime_cancel)
+add_executable(test_read_exception tests/test_read_exception.cpp)
+target_link_libraries(test_read_exception PRIVATE echonet_core)
+target_compile_options(test_read_exception PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME read_exception COMMAND test_read_exception)

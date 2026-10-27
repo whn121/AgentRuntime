@@ -1,6 +1,7 @@
 #include "ThreadPool/WorkThreadPool.h"
 #include "Logger/AsyncLogger.h"
 
+#include <utility>
 
 
 WorkThreadPool::WorkThreadPool(int num) : num_(num > 0 ? num : 4) 
@@ -14,11 +15,11 @@ WorkThreadPool::WorkThreadPool(int num) : num_(num > 0 ? num : 4)
 WorkThreadPool::~WorkThreadPool() { stop(); }
 
 
-void WorkThreadPool::submit(Task task)
+TaskQueue::PushResult WorkThreadPool::submit(Task&& task)
 {
     const auto result = queue_.tryPush(std::move(task));
 
-    if (result == TaskQueue::PushResult::Success) return;
+    if (result == TaskQueue::PushResult::Success) return result;
     if (result == TaskQueue::PushResult::Full)
     {
         LOG_WARN("WorkThreadPool: rejected task because the queue is full");
@@ -28,22 +29,9 @@ void WorkThreadPool::submit(Task task)
         LOG_WARN("WorkThreadPool: rejected task because the queue is stopped");
     }
 
-    // 被拒绝的任务没有执行, 但仍需要完成connection的任务收尾
-    if (task.onComplete_)
-    {
-        try
-        {
-            task.onComplete_();
-        }
-        catch(const std::exception& e)
-        {
-            LOG_ERROR("WorkThreadPool: rejected task completion threw: " + std::string(e.what()));
-        }
-        catch (...)
-        {
-            LOG_ERROR("WorkThreadPool: rejected task completion threw unknown exception");
-        }
-    }
+    // 拒绝任务由调用方负责后续处理。
+    // 不执行 run_，也不调用 onComplete_，避免将拒绝误判为正常完成。
+    return result;
 }
 
 

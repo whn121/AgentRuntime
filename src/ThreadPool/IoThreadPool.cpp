@@ -2,6 +2,7 @@
 #include "Net/Connection.h"
 #include "Logger/AsyncLogger.h"
 #include <future>
+#include <utility>
 
 
 IoThreadPool::IoThreadPool(int num) : num_(num > 0 ? num : 8)
@@ -115,12 +116,51 @@ void IoThreadPool::stop()
 {
     bool expected = false;
     if (!stop_.compare_exchange_strong (expected, true)) return; //比较并交换如果与1相当与2交换返回true,不相等吧原子赋值给1
+    
+    // 停机前 drain：在停止 EventLoop 之前，让每个 loop 线程
+    // 对所有仍待认领的关闭请求执行一次最终收尾。
+    // 这一步保证即使 Server::stop() 的调用顺序被修改，
+    // 也不会出现 closeCallBack_ 永久悬挂。
+    {
+        std::vector<std::future<void>> drainFutures;
+        drainFutures.reserve(loops_.size());
+
+        for (auto& loop : loops_)
+        {
+            auto done = std::make_shared<std::promise<void>>();
+            drainFutures.emplace_back(done->get_future());
+
+            EventLoop* rawLoop = loop.get();
+            const bool queued = loop->runInLoop([rawLoop, done]()
+            {
+                rawLoop->drainClosingConnections();
+                done->set_value();
+            });
+
+            // EventLoop 已拒绝投递时立即完成屏障，避免 wait 死锁。
+            // 此时该 loop 已经停止，drain 也不再可能执行。
+            if (!queued) done->set_value();
+        }
+
+        for (auto& future : drainFutures)
+        {
+            future.wait();
+        }
+    }
+    
     for (auto& loop : loops_) loop->stop();
     for (auto& t : threads_) if (t.joinable()) t.join();
 }
 
-void IoThreadPool::setCallBack(std::function<void(Task)> cb) { workCallback_ = cb; }
-std::function<void(Task)> IoThreadPool::getCallback() { return workCallback_; }
+void IoThreadPool::setCallBack(std::function<TaskQueue::PushResult(Task&&)> cb)
+{
+    workCallback_ = std::move(cb);
+}
+
+std::function<TaskQueue::PushResult(Task&&)> IoThreadPool::getCallback()
+{
+    return workCallback_;
+}
 
 
 void IoThreadPool::setbuildconn (std::function<std::shared_ptr<Connection> (int afd, EventLoop* loop)> bconn)

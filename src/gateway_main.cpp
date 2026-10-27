@@ -255,9 +255,9 @@ int main(int argc, char* argv[]) try
         conn->init();
         conn->setBusinessHandler(business_handler); // 把之前应以的lambda传入 之前io提交做了
         // 关键：出站连接的 Task 也要能提交（否则后端响应没人处理）
-        conn->setCallBack([&server](Task task) 
+        conn->setCallBack([&server](Task&& task) 
         {
-            server.submitWork(std::move(task));
+            return server.submitWork(std::move(task));
         });
 
         // 4.设置关闭回调
@@ -500,9 +500,9 @@ int main(int argc, char* argv[]) try
                     conn->setIdleTimeoutEnabled(false);
                     loop->updateConnection(conn);
                     conn->setBusinessHandler(business_handler);
-                    conn->setCallBack([&server](Task task) 
+                    conn->setCallBack([&server](Task&& task) 
                     {
-                        server.submitWork(std::move(task));
+                        return server.submitWork(std::move(task));
                     });
 
                     loop->updateChannel(conn->getChannel(), EPOLLIN);

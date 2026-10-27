@@ -9,6 +9,7 @@
 #include <atomic>
 #include <any>
 #include <functional>
+#include "ThreadPool/TaskQueue.h"
 
 
 
@@ -19,8 +20,8 @@ public:
     IoThreadPool(int num = 4);
     ~IoThreadPool();
     void submit(int afd);                              // 分发新连接
-    void setCallBack(std::function<void(Task)> cb);    // 设置工作线程池回调
-    std::function<void(Task)> getCallback();           // 获取回调
+    void setCallBack(std::function<TaskQueue::PushResult(Task&&)> cb);   // 设置工作线程池回调
+    std::function<TaskQueue::PushResult(Task&&)> getCallback();           // 获取回调
     void stop();
 
     // 在所有 I/O 循环中发起现有连接的关闭流程，并等待关闭请求执行。
@@ -45,7 +46,7 @@ private:
     std::vector<std::thread> threads_;
     std::atomic<bool> stop_ {false};
     int num_;
-    std::function<void(Task)> workCallback_;           // 投递给工作线程池
+    std::function<TaskQueue::PushResult(Task&&)> workCallback_;          // 投递给工作线程池
     std::atomic<size_t> next_{0};                      // 轮询计数器
     //{}给成员就地初始化列表
 

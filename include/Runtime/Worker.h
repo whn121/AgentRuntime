@@ -21,7 +21,7 @@ namespace runtime
     public:
         // 执行器接收任务输入，返回任务输出。
         // 当前用普通 C++ 函数模拟业务执行，后续可替换成 AI 调用。
-        using Executor = std::function <std::string (const std::string&)>;
+        using Executor = std::function <std::string (const std::string&, const CancellationToken&)>;
 
         explicit Worker (Executor executor);
 

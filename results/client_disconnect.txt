@@ -1,0 +1,4 @@
+客户端发请求后立即断开
+操作：发送 RUNTIME_TASK_REQ 后立刻 close socket，不等响应
+结果：等待 3s 后再发请求，正常返回 type=5；Backend/Gateway 均存活
+说明：断开连接的异步任务响应被静默丢弃，不影响后续请求。

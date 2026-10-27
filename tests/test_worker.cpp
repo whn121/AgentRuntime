@@ -1,6 +1,7 @@
 
 #include "Runtime/RuntimeTask.h"
 #include "Runtime/Worker.h"
+#include "Runtime/CancellationToken.h"
 
 #include <iostream>
 #include <memory>
@@ -11,7 +12,7 @@ int main() {
     using namespace runtime;
 
     // 测试 1：正常执行。
-    Worker worker([](const std::string& input) {
+    Worker worker([](const std::string& input, const runtime::CancellationToken&) {
         return "processed: " + input;
     });
 
@@ -34,7 +35,7 @@ int main() {
     }
 
     // 测试 2：执行器抛出异常。
-    Worker failingWorker([](const std::string&) -> std::string {
+    Worker failingWorker([](const std::string&, const runtime::CancellationToken&) -> std::string {
         throw std::runtime_error("simulated failure");
     });
 

@@ -2,7 +2,6 @@
 
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
-
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -61,7 +60,17 @@ namespace runtime
         }
     }
 
-    std::string LlamaClient::complete (const std::string& prompt) const
+    int progressCallback(void* clientp, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
+    {
+        const auto* token = static_cast<const CancellationToken*>(clientp);
+        if (token && token->cancelled())
+        {
+            return 1;  // 非 0 中止传输
+        }
+        return 0;
+    }
+
+    std::string LlamaClient::complete (const std::string& prompt, const CancellationToken& token) const
     {
         initializeCurl();
 
@@ -100,6 +109,9 @@ namespace runtime
         std::string responseBody;
 
         struct curl_slist* rawHeaders = nullptr;
+        // 当前只有一个 header, 失败时返回 nullptr, 没有已分配的链表需要 free
+        // 如果以后加第二个 header, 第二次 append 失败会泄漏第一次的结果
+        // 到时候要把 HeaderList 提前构造, 或者手动 free
         rawHeaders = curl_slist_append (rawHeaders, "Content-Type: application/json");
 
         if (!rawHeaders)
@@ -124,7 +136,17 @@ namespace runtime
         curl_easy_setopt(raw, CURLOPT_TIMEOUT_MS, timeoutMs_);
         curl_easy_setopt(raw, CURLOPT_NOSIGNAL, 1L);
 
+        // 取消检查: 必须关掉 NOPROGRESS, 否则 XFERINFOFUNCTION 不会被调用
+        curl_easy_setopt(raw, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(raw, CURLOPT_XFERINFOFUNCTION, progressCallback);
+        curl_easy_setopt(raw, CURLOPT_XFERINFODATA, const_cast<CancellationToken*>(&token));
+
         const CURLcode result = curl_easy_perform (raw);
+
+        if (result == CURLE_ABORTED_BY_CALLBACK)
+        {
+            throw std::runtime_error("LLAMA_REQUEST_CANCELLED");
+        }
 
         if (result != CURLE_OK)
         {

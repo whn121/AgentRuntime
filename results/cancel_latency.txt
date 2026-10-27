@@ -1,0 +1,7 @@
+关闭时取消在途任务
+场景：假模型服务接受连接但永不响应（sleep 300s）
+操作：kill -TERM Backend
+结果：backend_exited=YES，elapsed_ms=108
+对比：CURLOPT_TIMEOUT_MS=120000，取消将退出时间从 120s 缩短至 108ms
+边界：仅代表该场景的单次观测；TLS 握手、DNS 解析等阻塞路径的取消耗时
+     取决于 libcurl 内部行为，不能外推。

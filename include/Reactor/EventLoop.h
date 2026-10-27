@@ -29,6 +29,10 @@ public:
     // 在所属 I/O 线程中发起所有现有连接的关闭流程。
     // done 在本轮关闭请求全部发起后执行，不代表所有连接都已完成最终关闭。
     void closeAllConnections(std::function<void()> done = {});
+    // 在所属 I/O 线程中，对所有仍持有"待执行最终关闭回调"的连接
+    // 执行一次认领与收尾。用于 IoThreadPool 停机前兜底，
+    // 防止 runInLoop 投递失败的关闭请求永久悬挂。
+    void drainClosingConnections();
     void updateChannelEvent(Channel* ch, uint32_t events); // 修改监听事件
     bool runInLoop(std::function<void()> cb);              // 线程安全投递任务
     void wakeUp();                                         // 唤醒epoll

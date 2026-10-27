@@ -2,6 +2,7 @@
 
 #include "Scheduler.h"
 #include "Worker.h"
+#include "CancellationToken.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -28,8 +29,8 @@ namespace runtime
         RuntimeEngine(const RuntimeEngine&) = delete;
         RuntimeEngine& operator=(const RuntimeEngine&) = delete;
 
-        // 接收到任务后立即返回;false表示停止中队列已满提交失败
-        bool submit(std::string input, Completion completion);
+        // clientId 用于公平调度与按客户端的队列配额。
+        bool submit(Scheduler::ClientId clientId, std::string input, Completion completion);
 
         // 停止接收新任务, 等待已接收任务执行结束
         void stop();
@@ -53,5 +54,9 @@ namespace runtime
         std::size_t activeCount_{0};
         bool stopping_{false};
         std::once_flag stopOnce_;
+
+        // 当前正在执行的任务的令牌。由 mutex_ 保护
+        // worker 取出任务后加入, 执行完成后移除
+        std::vector<CancellationToken> activeTokens_;
     };
 }

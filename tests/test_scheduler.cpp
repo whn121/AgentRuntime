@@ -9,20 +9,24 @@ int main() {
 
     Scheduler scheduler;
 
+    // 本测试验证同一 clientId 下的 FIFO 与 ID 唯一性。
+    constexpr int kClient = 1;
+    (void)kClient;
+
     // 测试一：初始状态。
     assert(scheduler.taskCount() == 0);
     assert(scheduler.pendingCount() == 0);
 
     // 测试二：提交任务。
-    assert(scheduler.submit(1, "Task A"));
-    assert(scheduler.submit(2, "Task B"));
-    assert(scheduler.submit(3, "Task C"));
+    assert(scheduler.submit(1, kClient, "Task A"));
+    assert(scheduler.submit(2, kClient, "Task B"));
+    assert(scheduler.submit(3, kClient, "Task C"));
 
     assert(scheduler.taskCount() == 3);
     assert(scheduler.pendingCount() == 3);
 
     // 测试三：重复 ID 必须被拒绝，不能覆盖原任务。
-    assert(!scheduler.submit(1, "Duplicate Task"));
+    assert(!scheduler.submit(1, kClient, "Duplicate Task"));
 
     assert(scheduler.taskCount() == 3);
     assert(scheduler.find(1)->input() == "Task A");

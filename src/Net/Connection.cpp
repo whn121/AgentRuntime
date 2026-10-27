@@ -1,12 +1,15 @@
 #include "Net/Connection.h"
 #include "Logger/AsyncLogger.h"
 #include "Metrics/Metrics.h"
+#include "Protocol/MyProtocol.h"
+
 #include <sys/uio.h> //解决buffer一次只能读一块, 减少系统调用
+#include <utility>
+#include <queue>
 
 
 // 构造函数：转移 Channel 和 Protocol 的所有权，保存 EventLoop 指针
-Connection::Connection(int afd, std::unique_ptr<Channel> channel, EventLoop* loop,
-                       std::unique_ptr<Protocol> protocol)
+Connection::Connection(int afd, std::unique_ptr<Channel> channel, EventLoop* loop, std::unique_ptr<Protocol> protocol)
     : afd_(afd), loop_(loop), channel_(std::move(channel)), protocol_(std::move(protocol)) {}
 
 Connection::~Connection()
@@ -23,7 +26,7 @@ Connection::~Connection()
 void Connection::read()
 {
     // 对端EOF后不再读取, 但允许已收到的请求完成处理
-    if(state_ != State::Connected || peerReadClosed_)
+    if(state_ != State::Connected || peerReadClosed_ || readPausedForBackpressure_)
     {
         return;
     }
@@ -222,8 +225,15 @@ void Connection::write()
     {
         channel_->disableWriting();
         loop_->updateChannelEvent(channel_.get(), channel_->getEvents());
+    }
 
-        // 如果对端已经EOF, 检查能否完成最终关闭
+    // 发送进度可能把队列从高水位降到低水位, 这时要恢复读取
+    // 注意：不管 outBuffer_ 是否排空都要检查, 部分发送也会让水位下降
+    updateReadInterestForBackpressure();
+
+    // 如果对端已经EOF, 检查能否完成最终关闭
+    if (outBuffer_.getreadable() == 0)
+    {
         maybeFinishAfterPeerEof();
     }
 }
@@ -231,65 +241,79 @@ void Connection::write()
 // 发送响应, 入队列
 void Connection::sendResponse(const std::any& response)
 {
+    // 关闭期间静默丢掉响应是预期行为。异步任务(RuntimeEngine)的完成回调
+    // 可能在连接关了之后才到, 这时候丢掉比强发安全
+    // 见 docs/shutdown-semantics.md
     if (!isConnected()) return;
     // 回调已经提交, 但可能尚未被Eventloop执行
     // 先计数, 避免EOF收尾误认为没有待发送工作
     pendingSendCallbacks_.fetch_add(1, std::memory_order_relaxed);
 
-    std::weak_ptr<Connection> weakself = shared_from_this();
-
-    if (!loop_->runInLoop( [weakself,response]
+    // runInLoop 的参数构造(lambda 拷贝 response)和 task_queue_.emplace_back
+    // 都可能抛 bad_alloc。任何一步抛异常都要把计数还回去
+    // 否则maybeFinishAfterPeerEof 会永远被这个计数挡住
+    try
     {
-        auto self = weakself.lock();
-        if(!self) return;
+        std::weak_ptr<Connection> weakself = shared_from_this();
 
-        // 进入回调后, 先结束等待执行计数
-        self->pendingSendCallbacks_.fetch_sub(1, std::memory_order_acq_rel);
-
-        if(!self->isConnected()) return;
-
-        std::string data;
-        try { data = self->protocol_->encode(response); }
-        catch (const std::exception& e) {
-            LOG_ERROR("Response encoding failed: " + std::string(e.what()));
-            self->handleClose();
-            return;
-        }
-
-        bool queueFull = false;
-
+        if (!loop_->runInLoop( [weakself,response]
         {
-            std::lock_guard<std::mutex> lock (self->sendMutex_);
+            auto self = weakself.lock();
+            if(!self) return;
 
-            // 使用减法比较, 避免size相加时发生整数溢出
-            if (data.size() > MAX_SEND_QUEUE_BYTES || 
-                self->sendQueueBytes_ > MAX_SEND_QUEUE_BYTES - data.size())
+            // 进入回调后, 先结束等待执行计数
+            self->pendingSendCallbacks_.fetch_sub(1, std::memory_order_acq_rel);
+
+            if(!self->isConnected()) return;
+
+            std::string data;
+            try { data = self->protocol_->encode(response); }
+            catch (const std::exception& e) 
             {
-                queueFull = true;
+                LOG_ERROR("Response encoding failed: " + std::string(e.what()));
+                self->handleClose();
+                return;
             }
-            else 
+
+            bool queueFull = false;
+
             {
-                self->sendQueueBytes_ += data.size();
-                self->sendQueue_.push (std::move(data));
+                std::lock_guard<std::mutex> lock (self->sendMutex_);
+
+                // 使用减法比较, 避免size相加时发生整数溢出
+                if (data.size() > MAX_SEND_QUEUE_BYTES ||  self->sendQueueBytes_ > MAX_SEND_QUEUE_BYTES - data.size())
+                {
+                    queueFull = true;
+                }
+                else 
+                {
+                    self->sendQueueBytes_ += data.size();
+                    self->sendQueue_.push (std::move(data));
+                }
             }
-        }
 
-        if (queueFull)
-        {
-            LOG_WARN("Connection fd=" + std::to_string(self->afd_)
-                + " sendQueue exceeds limit; closing connection");
+            if (queueFull)
+            {
+                Metrics::conn_closed_send_high_water.fetch_add(1, std::memory_order_relaxed);
+                LOG_WARN("Connection fd=" + std::to_string(self->afd_) + " sendQueue exceeds limit; closing connection");
 
-            self->handleClose();
-            return;
-        }
+                self->handleClose();
+                return;
+            }
 
-        self->flushSendQueue();
+            self->flushSendQueue();
 
-        // flush 后再次检查。
-        // 若已排空，可以完成 EOF 收尾；若仍有数据，检查会返回。
-        self->maybeFinishAfterPeerEof();
+            // flush 后再次检查。
+            // 若已排空，可以完成 EOF 收尾；若仍有数据，检查会返回。
+            self->maybeFinishAfterPeerEof();
 
-    })) pendingSendCallbacks_.fetch_sub(1, std::memory_order_acq_rel);
+        })) pendingSendCallbacks_.fetch_sub(1, std::memory_order_acq_rel);
+    }
+    catch(...)
+    {
+        pendingSendCallbacks_.fetch_sub(1, std::memory_order_acq_rel);
+        throw;
+    }
 }
 
 Channel* Connection::getChannel()
@@ -318,20 +342,35 @@ void Connection::init()
     channel_->setcloseCallBack([weakself] { if (auto self = weakself.lock()) { self -> myClose(); } });  // 挂起/错误,lock尝试升级为临时强引用,回调结束析构
 }
 
-void Connection::setCallBack(std::function<void(Task)> callback)
+void Connection::setCallBack(std::function<TaskQueue::PushResult(Task&&)> callback)
 {
-    worksumbitcallback_ = callback;   // 设置业务处理回调
+    worksumbitcallback_ = std::move(callback);
 }
 
 void Connection::close()
 {
+    {
+        std::lock_guard<std::mutex> lock (taskMutex_);
+        taskSchedulingStopped_ = true;
+        closeCallbackPending_ = true;
+    }
+
     std::weak_ptr<Connection> weakself = shared_from_this();
-    loop_->runInLoop([weakself] {
-        auto self = weakself.lock();
-        if (self) {
-            self->handleClose();   // 在 EventLoop 线程里执行
+    
+    const bool accepted = loop_->runInLoop([weakself]
+    {
+        if (auto self = weakself.lock())
+        {
+            self->handleClose();
         }
     });
+
+    if (!accepted)
+    {
+        // closeCallbackPending_ 保持 true，由 IoThreadPool::stop() 中的
+        // drainClosingConnections() 在 EventLoop 线程认领并执行 closeCallBack_
+        // 不得在当前线程直接操作 Channel 或 finishClose()
+    }
 }
 
 // 返回距离上次活跃经过的秒数
@@ -351,22 +390,7 @@ void Connection::handleClose()
         // 本函数必须运行在所属 EventLoop 线程。
         if (expected != State::Closing) return;
 
-        bool needFinalizeClose = false;
-
-        {
-            std::lock_guard<std::mutex> lock(taskMutex_);
-
-            // 只有业务任务已结束, 且最终关闭仍待处理时能认领
-            if (!taskRunning_ && closeCallbackPending_)
-            {
-                closeCallbackPending_ = false;
-                needFinalizeClose = true;
-            }
-        }
-        if (needFinalizeClose && closeCallBack_)
-        {
-            closeCallBack_(afd_);
-        }
+        finalizeCloseIfPending();
         
         return;
     }
@@ -502,6 +526,95 @@ void Connection::finishClose()
     LOG_INFO("finishClose done");
 }
 
+void Connection::finalizeCloseIfPending()
+{
+    bool needFinalize = false;
+
+    {
+        std::lock_guard<std::mutex> lock(taskMutex_);
+
+        // 只有业务任务已结束、且最终关闭仍待处理时才能认领。
+        // 认领和清零在同一临界区内完成，保证并发调用只有一个认领者。
+        if (closeCallbackPending_ && !taskRunning_)
+        {
+            closeCallbackPending_ = false;
+            needFinalize = true;
+        }
+    }
+
+    if (needFinalize && closeCallBack_)
+    {
+        // 该回调由 IoThreadPool 注入，内部会执行
+        // 业务清理 + loop->removeConnection(fd)。
+        // 因此本函数必须在 EventLoop 线程调用。
+        closeCallBack_(afd_);
+    }
+}
+void Connection::forceCloseOnLoopStop()
+{
+    // 强制进入Closing 若已经是closing/Closed, CAS失败, 继续走认领
+    State expected = State::Connected;
+    state_.compare_exchange_strong (expected, State::Closing);
+
+    // 标记待最终关闭：即使之前从未调用过 close()，也要让 finalizeCloseIfPending 认领
+    {
+        std::lock_guard<std::mutex> lock(taskMutex_);
+        closeCallbackPending_ = true;
+    }
+
+    // 立即尝试认领。若 taskRunning_ == true，closeCallbackPending_ 保持 true，
+    // 需要 EventLoop::loop() 之后的二次扫描来覆盖（见 1a-10 的循环调用）。
+    finalizeCloseIfPending();
+}
+
+void Connection::handleTaskSubmitFailure(TaskQueue::PushResult result, bool preserveRunningTask)
+{
+    if (result == TaskQueue::PushResult::Success)
+    {
+        return;
+    }
+
+    Metrics::conn_rejected_submit_failed.fetch_add(1, std::memory_order_relaxed);
+    // 将等待任务转移到局部队列, 避免持锁销毁任务对象
+    std::queue<Task> cancelledTasks;
+
+    {
+        std::lock_guard<std::mutex> lock(taskMutex_);
+
+        // 拒绝后不再允许本链接继续调度任务
+        taskSchedulingStopped_ = true;
+
+        // 被拒绝的任务没有进入Worker, 因为改调度槽位以结束
+        if (!preserveRunningTask)
+        {
+            taskRunning_ = false;
+        }
+
+        // 不调用这些任务的 onComplete_：
+        // 它们的完成回调会推进 FIFO，可能造成递归调度。
+        cancelledTasks.swap(pendingTasks_);
+    }
+
+    if (result == TaskQueue::PushResult::Full)
+    {
+        LOG_ERROR("Connection fd=" + std::to_string(afd_) + " work queue full; stopping task scheduling");
+    }
+    else 
+    {
+        LOG_ERROR("Connection fd=" + std::to_string(afd_) + " work queue stopped; stopping task scheduling");
+    }
+
+    // 在锁外销毁被取消的等待任务。
+    while (!cancelledTasks.empty()) 
+    {
+        cancelledTasks.pop();
+    }
+
+    // 统一使用现有 EventLoop 关闭流程。
+    // 不在这里直接调用 handleClose()，因为当前线程可能不是所属 IO 线程。
+    close();
+}
+
 void Connection::enqueueTask(Task task)
 {
     Task nextTask;
@@ -511,10 +624,14 @@ void Connection::enqueueTask(Task task)
     {
         std::lock_guard<std::mutex> lock(taskMutex_);
 
-        if (!isConnected() || !worksumbitcallback_) return;
+        if (!isConnected() || !worksumbitcallback_ || taskSchedulingStopped_) return;
 
         // 队列满时不接收新的任务, 避免单个链接无限积压
-        if (pendingTasks_.size() >= MAX_PENDING_TASKS) queueFull = true;
+        if (pendingTasks_.size() >= MAX_PENDING_TASKS) 
+        {
+            queueFull = true;
+            taskSchedulingStopped_ = true;
+        }
         else 
         {
             pendingTasks_.push(std::move(task));
@@ -535,14 +652,33 @@ void Connection::enqueueTask(Task task)
     // 因为关闭流程会获得taskMutex_
     if (queueFull)
     {
+        Metrics::conn_rejected_pending_full.fetch_add(1, std::memory_order_relaxed);
         LOG_WARN("Connection fd=" + std::to_string(afd_) + " pending task queue full; closing connection");
-        handleClose();
+
+        // 尝试发送一个明确的拥塞错误
+        // sendResponse 内部会检查 isConnected()，若已进入 Closing 则静默丢弃
+        try
+        {
+            sendResponse(MyMessage{
+                MyType::ERROR_RESP,
+                0,
+                "SERVER_BUSY_PENDING_QUEUE_FULL"
+            });
+        }
+
+        catch (...) {}
+        close();
         return;
     }
 
     if (needSubmit && worksumbitcallback_)
     {
-        worksumbitcallback_(std::move(nextTask));
+        const auto result = worksumbitcallback_ (std::move (nextTask));
+        
+        if (result != TaskQueue::PushResult::Success)
+        {
+            handleTaskSubmitFailure(result);
+        }
     }
 }
 
@@ -557,7 +693,7 @@ void Connection::onTaskComplete()
         std::lock_guard<std::mutex> lock(taskMutex_);
 
         //  如果链接已经进入终止关闭流程, 不再调度后续业务任务
-        if (state_.load() != State::Connected)
+        if (state_.load() != State::Connected || taskSchedulingStopped_) 
         {
             while (!pendingTasks_.empty())
             {
@@ -567,10 +703,11 @@ void Connection::onTaskComplete()
             taskRunning_ = false;
             noMoreTasks = true;
 
-            // 认领延迟关闭任务, 确保只安排一次最终关闭
+            // 只标记需要投递，不在锁内清零。
+            // 清零与认领由 finalizeCloseIfPending() 在 EventLoop 线程原子完成，
+            // 避免"投递失败但已清零"导致关闭丢失。
             if (closeCallbackPending_)
             {
-                closeCallbackPending_ = false;
                 needFinalizeClose = true;
             }
         }
@@ -593,9 +730,14 @@ void Connection::onTaskComplete()
     }
 
     // 继续执行下一个业务任务
-    if (needSubmit && worksumbitcallback_)
+    if (needSubmit)
     {
-        worksumbitcallback_(std::move(nextTask));
+        const auto result = worksumbitcallback_ ? worksumbitcallback_ (std::move (nextTask)) : TaskQueue::PushResult::Stopped;
+
+        if (result != TaskQueue::PushResult::Success)
+        {
+            handleTaskSubmitFailure (result);
+        }
         return;
     }
 
@@ -609,22 +751,17 @@ void Connection::onTaskComplete()
         {
             if (auto self = weakself.lock())
             {
-                if (self->closeCallBack_)
-                {
-                    // IoThreadPool中的回调会先清理业务层
-                    // 再执行removeConnection()和finishClose()
-                    self->closeCallBack_(self->afd_);
-                }
+                self->finalizeCloseIfPending();
             }
         });
 
         if (!queued)
         {
-            // 不可在这里直接调用 closeCallBack_。
-            // EventLoop 已拒绝任务，说明当前停服顺序仍有缺陷，
-            // 需要由 Server 停服流程保证该回调能被执行。
-            LOG_ERROR( "Connection: failed to schedule final close callback, fd="
-                + std::to_string(afd_));
+            // 投递失败时 closeCallbackPending_ 保持 true，
+            // 由 IoThreadPool::stop() 中的 drainClosingConnections() 在
+            // EventLoop 线程兜底认领，不会丢失。
+            LOG_ERROR("Connection: failed to schedule finalize close, fd=" + std::to_string(afd_)
+                + "; deferred to drainClosingConnections");
         }
 
         return;
@@ -681,8 +818,8 @@ void Connection::flushSendQueue()
         // 使用减法比较, 避免currentBytes + msg.szie() 溢出
         if (currentBytes > HIGH_WATER_MARK || msg.size() > HIGH_WATER_MARK - currentBytes)
         {
-            LOG_WARN("Connection fd=" + std::to_string(afd_)
-                + " outBuffer would exceed high water mark; closing");
+            Metrics::conn_closed_send_high_water.fetch_add(1, std::memory_order_relaxed);
+            LOG_WARN("Connection fd=" + std::to_string(afd_) + " outBuffer would exceed high water mark; closing");
 
             handleClose();
             return;
@@ -692,10 +829,53 @@ void Connection::flushSendQueue()
         temp.pop();
     }
 
+    uint64_t current = static_cast<uint64_t>(outBuffer_.getreadable());
+    uint64_t prev = Metrics::conn_max_send_queue_bytes.load(std::memory_order_relaxed);
+    while (current > prev && !Metrics::conn_max_send_queue_bytes.compare_exchange_weak(prev, current, 
+            std::memory_order_relaxed)) {}
+
     // 有数据待发 → 启用 EPOLLOUT
     if (outBuffer_.getreadable() > 0)
     {
         channel_->enableWriting();
         loop_->updateChannelEvent(channel_.get(), channel_->getEvents());
+    }
+
+    // 追加数据可能把队列推过高水位, 这时暂停读取
+    // 放在 enableWriting 之后, 这样 disableReading 时 epoll 里还保留 EPOLLOUT
+    updateReadInterestForBackpressure();
+}
+
+void Connection::updateReadInterestForBackpressure()
+{
+    // 只有正常连接才调整读事件, Closing/Closed 阶段不碰 channel
+    if (state_ != State::Connected)
+    {
+        return;
+    }
+
+    const size_t pendingBytes = outBuffer_.getreadable();
+
+    // 涨过高水位：暂停读取, 让 TCP 窗口自己收缩
+    if (!readPausedForBackpressure_ && pendingBytes >= SEND_SOFT_HIGH_WATER)
+    {
+        readPausedForBackpressure_ = true;
+        channel_->disableReading();
+        loop_->updateChannelEvent(channel_.get(), channel_->getEvents());
+
+        Metrics::conn_backpressure_paused.fetch_add(1, std::memory_order_relaxed);
+        LOG_INFO("Connection fd=" + std::to_string(afd_)
+            + " send queue high, pause reading");
+    }
+    // 降到低水位：恢复读取
+    else if (readPausedForBackpressure_ && pendingBytes <= SEND_SOFT_LOW_WATER)
+    {
+        readPausedForBackpressure_ = false;
+        channel_->enableReading();
+        loop_->updateChannelEvent(channel_.get(), channel_->getEvents());
+
+        Metrics::conn_backpressure_resumed.fetch_add(1, std::memory_order_relaxed);
+        LOG_INFO("Connection fd=" + std::to_string(afd_)
+            + " send queue low, resume reading");
     }
 }

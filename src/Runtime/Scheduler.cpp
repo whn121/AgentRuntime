@@ -1,10 +1,11 @@
 #include "Runtime/Scheduler.h"
+#include "Metrics/Metrics.h"
 
 #include <utility>
 
 namespace runtime
 {
-    bool Scheduler::submit (TaskId id, std::string input)
+    bool Scheduler::submit (TaskId id, ClientId clientId, std::string input)
     {
         // 先创建任务, 非法id会由runtimetask构造函数检测冰雹出异常
         auto task = std::make_shared<RuntimeTask> (id, std::move (input));
@@ -14,25 +15,43 @@ namespace runtime
         // emplace 不会覆盖已有ID
         // 如果id已存在, 直接拒绝重复提交
         const auto inserted = tasks_.emplace(id, task); 
-
         if (!inserted.second)
         {
             return false;
         }
         
-        // 将 ID 加入 FIFO 队列
-        // 如果队列扩容时抛出异常，回滚刚刚插入的任务
-        // 避免任务表里出现一个永远不会被调度的任务
+        // 按客户端配额检查, 配额满时回滚任务表, 返回false让上游拒绝
+        auto& clientQueue = perClientQueues_[clientId];
+        if (clientQueue.size() >= MAX_PENDING_PER_CLIENT)
+        {
+            tasks_.erase (id);
+            Metrics::scheduler_rejected_quota.fetch_add(1, std::memory_order_relaxed);
+            // 若该客户端队列位空则顺便map条目, 避免map无限增长
+            if (clientQueue.empty())
+            {
+                perClientQueues_.erase (clientId);
+            }
+            return false;
+        }
+        
         try
         {
-            pending_queue_.push_back(id);
+            clientQueue.push_back (id);
+
+            // 首次出现的客户端加入轮转队列
+            if (clientQueue.size() == 1)
+            {
+                roundRobin_.push_back (clientId);
+            }
         }
         catch(...)
         {
-            tasks_.erase(id);
+            tasks_.erase (id);
             throw;
         }
         
+        ++pendingTotal_;
+        Metrics::scheduler_pending.store(pendingTotal_, std::memory_order_relaxed);
         return true;
     }
 
@@ -41,24 +60,45 @@ namespace runtime
         std::lock_guard<std::mutex> lock(mutex_);
 
         // 队列为空意味着当前没有等待调度的任务
-        while (!pending_queue_.empty())
+        while (!roundRobin_.empty())
         {
-            const TaskId id = pending_queue_.front();
-            pending_queue_.pop_front();
+            const ClientId clientId = roundRobin_.front();
+            roundRobin_.pop_front();
 
-            // 根据队列中的id找到唯一的任务对象
-            const auto it = tasks_.find (id);
+            auto it = perClientQueues_.find (clientId);
+            if (it == perClientQueues_.end() || it->second.empty())
+            {
+                // 轮转条目与实际队列不一致时清理该条目, 继续下一个客户端
+                if (it != perClientQueues_.end())
+                {
+                    perClientQueues_.erase (it);
+                }
+                continue;
+            }
 
-            // 正常情况下队列 ID 必须存在于任务表中
-            // 如果内部数据意外不一致，则跳过该 ID，避免反复卡住
-            if (it == tasks_.end()) continue;
+            auto& clientQueue = it->second;
+            const TaskId id = clientQueue.front();
+            clientQueue.pop_front();
+            --pendingTotal_;
+            Metrics::scheduler_pending.store(pendingTotal_, std::memory_order_relaxed);
 
+            // 该客户端仍有任务，放回轮转队尾，保证其他客户端先被轮到。
+            if (!clientQueue.empty())
+            {
+                roundRobin_.push_back (clientId);
+            }
+            else
+            {
+                perClientQueues_.erase (it);
+            }
 
-            // 只有 PENDING 任务可以进入 SCHEDULED
-            // 如果状态已被其他代码改变，这个队列项就不能再调度
-            if (!it->second->schedule()) continue;
+            const auto taskIt = tasks_.find (id);
+            if (taskIt == tasks_.end()) continue;
 
-            return it->second;
+            // 只有 PENDING 任务能进入 SCHEDULED。
+            if (!taskIt->second->schedule()) continue;
+
+            return taskIt->second;
 
         }
 
@@ -108,7 +148,7 @@ namespace runtime
     std::size_t Scheduler::pendingCount() const 
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        return pending_queue_.size();
+        return pendingTotal_;
     }
 
 }

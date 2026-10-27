@@ -35,7 +35,7 @@ namespace runtime
         {
             // 执行具体业务逻辑
             // Worker不关注输入代表啥,也不关心输出如何生产
-            std::string result = executor_ (task->input());
+            std::string result = executor_ (task->input(), task->token());
 
             // 只有RUNNING状态才能被标记为成功
             if (!task->succeed (std::move (result)))

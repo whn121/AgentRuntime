@@ -1,4 +1,5 @@
 #include "Runtime/RuntimeEngine.h"
+#include "Metrics/Metrics.h"
 
 #include <stdexcept>
 #include <utility>
@@ -27,6 +28,11 @@ namespace runtime
         {
             workers_.reserve(workerCount);
 
+            // 每个 worker 同时最多持有一个在途任务, activeTokens_ 的大小
+            // 不会超过 workerCount。预分配之后 push_back 不会再分配内存,
+            // 不会抛 bad_alloc, workerLoop 里就不需要额外的 try/catch。
+            activeTokens_.reserve(workerCount);
+            
             for (std::size_t i = 0; i < workerCount; ++i)
             {
                 workers_.emplace_back ([this] {workerLoop();});
@@ -55,12 +61,19 @@ namespace runtime
         stop();
     }
 
-    bool RuntimeEngine::submit (std::string input, Completion completion)
+    bool RuntimeEngine::submit (Scheduler::ClientId clientId, std::string input, Completion completion)
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        if (stopping_ || scheduler_.pendingCount() >= maxPendingTasks_)
+        if (stopping_)
         {
+            Metrics::runtime_rejected_stopping.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+
+        if (scheduler_.pendingCount() >= maxPendingTasks_)
+        {
+            Metrics::runtime_rejected_capacity.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
 
@@ -75,7 +88,7 @@ namespace runtime
 
         try
         {
-            if (!scheduler_.submit(id, std::move (input)))
+            if (!scheduler_.submit(id, clientId, std::move (input)))
             {
                 completions_.erase (id);
                 return false;
@@ -125,6 +138,11 @@ namespace runtime
                 }
 
                 ++activeCount_;
+                
+                // 登记在途任务的令牌, stop() 时靠它取消
+                // 不登记的话 stop() 遍历空集合, executor_ 看不到 cancelled()
+                activeTokens_.push_back(task->token());
+                Metrics::runtime_active.store(activeCount_, std::memory_order_relaxed);
             }
 
             WorkerExecutionResult result = WorkerExecutionResult::FAILED;
@@ -171,7 +189,19 @@ namespace runtime
             
             {
                 std::lock_guard<std::mutex> lock(mutex_);
+
+                // 从活跃令牌集合移除, worker数很小, 线性查找成本很低
+                for (auto tokenIt = activeTokens_.begin(); tokenIt != activeTokens_.end(); ++tokenIt)
+                {
+                    if (*tokenIt == task->token())
+                    {
+                        activeTokens_.erase(tokenIt);
+                        break;
+                    }
+                }
+
                 --activeCount_;
+                Metrics::runtime_active.store(activeCount_, std::memory_order_relaxed);
             }
 
             cv_.notify_all();
@@ -185,6 +215,13 @@ namespace runtime
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 stopping_ = true;
+
+                // 取消所有在途任务。executor_ 在周期性检查中看到 cancelled()后会尽快返回
+                // workerLoop 得以继续走到 join 点
+                for (auto& token : activeTokens_)
+                {
+                    token.cancel();
+                }
             }
 
             cv_.notify_all();

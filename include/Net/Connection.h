@@ -13,6 +13,7 @@
 #include <queue>
 #include <atomic>
 #include <cstddef>
+#include "ThreadPool/TaskQueue.h"
 
 
 
@@ -33,7 +34,7 @@ public:
     void setcloseCallback(std::function<void(int)> close);// 设置连接关闭回调
     void myClose();                                       // 主动关闭连接
     void init();                                          // 初始化回调绑定
-    void setCallBack(std::function<void(Task)>);          // 设置业务处理回调
+    void setCallBack(std::function<TaskQueue::PushResult(Task&&)> callback); // 设置业务处理回调
     void close();// 线程安全的关闭方法, 可以从任意线程调用
 
     // 将任务加入当前连接的 FIFO 队列 FIFO(按照到达先后顺序执行)
@@ -66,6 +67,19 @@ public:
 
     void finishClose();     //真正关闭释放内存
 
+    // 统一认领并执行最终关闭回调。
+    // 仅当 closeCallbackPending_ == true 且没有业务任务在运行时才认领，
+    // 保证 closeCallBack_ 恰好执行一次。
+    // 必须运行在所属 EventLoop 线程（内部会调用 closeCallBack_，
+    // 而 closeCallBack_ 会触发 removeConnection，后者有 assertInLoopThread）。
+    void finalizeCloseIfPending();
+
+    // 仅在所属 EventLoop 即将退出时调用（loop 线程内）。
+    // 强制从 Connected 进入 Closing，并尝试认领最终关闭。
+    // 与 close() 的区别：不通过 runInLoop 投递（此时投递必然失败），
+    // 直接在 loop 线程内执行。
+    void forceCloseOnLoopStop();
+
     
 private:
     int afd_;                                  // socket 文件描述符
@@ -75,7 +89,7 @@ private:
     std::unique_ptr<Channel> channel_;         // 对应的 Channel
     std::function<void(int)> closeCallBack_;   // 关闭回调（通知 EventLoop 清理）
     std::unique_ptr<Protocol> protocol_;       // 协议对象（多态）
-    std::function<void(Task)> worksumbitcallback_; // 将任务投递给工作线程池的回调
+    std::function<TaskQueue::PushResult(Task&&)> worksumbitcallback_; // 将任务投递给工作线程池的回调
     //防止重复关闭
     enum class State
     {
@@ -95,6 +109,8 @@ private:
     std::atomic<size_t> pendingSendCallbacks_{0};
     
     void handleClose();      // 统一关闭入口 ,进入关闭状态,禁止新的io操作,移除epoll监听
+
+    void handleTaskSubmitFailure(TaskQueue::PushResult result, bool preserveRunningTask = false); // 处理工作线程池拒绝任务：停止调度、取消等待任务并请求关闭
 
     void maybeFinishAfterPeerEof(); // 专门负责判断 对端发送方向关闭后, 业务任务是否完成,待执行发送回调是否归零, 以及响应缓冲是否排空,都满足进入关闭流程
 
@@ -116,6 +132,10 @@ private:
     // true：当前已经有一个任务被送到 Worker 执行
     bool taskRunning_ = false;
 
+    // 任务提交失败或队列溢出后，禁止继续接收和调度任务。
+    // 由 taskMutex_ 保护。
+    bool taskSchedulingStopped_ = false;
+
     // 终止关闭已请求，但仍有业务任务执行。
     // 由 taskMutex_ 保护。
     bool closeCallbackPending_ = false;
@@ -132,4 +152,14 @@ private:
    
     // 写缓冲高水位：超过就断开连接, 防止客户端只读不写把服务器内存吃光
     static constexpr size_t HIGH_WATER_MARK = 64 * 1024 * 1024;  // 64MB
+
+    // 软背压水位：发送队列超过此值时暂停读取，降到低水位后恢复。
+    static constexpr size_t SEND_SOFT_HIGH_WATER = 8 * 1024 * 1024;   // 8MB
+    static constexpr size_t SEND_SOFT_LOW_WATER  = 2 * 1024 * 1024;   // 2MB
+
+    // 当前是否因软背压暂停了读取（仅 loop 线程读写）。
+    bool readPausedForBackpressure_ = false;
+
+    // 根据发送队列水位, 决定暂停还是恢复读事件
+    void updateReadInterestForBackpressure();
 };
