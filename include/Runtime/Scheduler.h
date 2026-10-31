@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <deque>
+#include <vector>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -43,6 +44,12 @@ namespace runtime
         // 仅删除已进入终态（SUCCEEDED / FAILED）的任务。
         // 正在执行或等待调度的任务不会被删除。
         bool eraseTerminal(TaskId id);
+
+        // 把所有还没被调度的任务从队列里取出并返回
+        // 被取出的任务在 Scheduler 里不再被跟踪，状态仍然是 PENDING
+        // 调用方负责把它们标记为失败并通知 completion
+        // FORCE 关闭时用
+        std::vector<std::shared_ptr<RuntimeTask>> drainAllPending();
 
         // 当前进程中保存的任务总数，包括已经结束的任务。
         std::size_t taskCount() const;

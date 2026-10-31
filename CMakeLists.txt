@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(EchoNet LANGUAGES CXX)
+project(AgentRuntime LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -51,7 +51,15 @@ add_executable(EchoNetBackend
     src/backend_main.cpp
     src/Runtime/LlamaClient.cpp
 )
+
 find_package(CURL REQUIRED)
+
+find_path(NLOHMANN_JSON_INCLUDE_DIR nlohmann/json.hpp)
+if(NOT NLOHMANN_JSON_INCLUDE_DIR)
+    message(FATAL_ERROR "nlohmann/json headers are required (nlohmann-json3-dev)")
+endif()
+target_include_directories(EchoNetBackend PRIVATE ${NLOHMANN_JSON_INCLUDE_DIR})
+
 target_link_libraries(EchoNetBackend PRIVATE echonet_core CURL::libcurl)
 target_compile_options(EchoNetBackend PRIVATE -Wall -Wextra -Wpedantic)
 # RuntimeEngine 独立行为测试
@@ -110,7 +118,13 @@ add_executable(test_runtime_cancel tests/test_runtime_cancel.cpp)
 target_link_libraries(test_runtime_cancel PRIVATE echonet_core)
 target_compile_options(test_runtime_cancel PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME runtime_cancel COMMAND test_runtime_cancel)
+
 add_executable(test_read_exception tests/test_read_exception.cpp)
 target_link_libraries(test_read_exception PRIVATE echonet_core)
 target_compile_options(test_read_exception PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME read_exception COMMAND test_read_exception)
+
+add_executable(test_force_shutdown tests/test_force_shutdown.cpp)
+target_link_libraries(test_force_shutdown PRIVATE echonet_core)
+target_compile_options(test_force_shutdown PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME force_shutdown COMMAND test_force_shutdown)

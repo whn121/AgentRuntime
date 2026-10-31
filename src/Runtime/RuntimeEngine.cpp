@@ -208,19 +208,53 @@ namespace runtime
         }
     }
 
-    void RuntimeEngine::stop()
+    void RuntimeEngine::stop(ShutdownMode mode)
     {
-        std::call_once(stopOnce_, [this]
+        std::call_once(stopOnce_, [this, mode]
         {
+            // 收集需要在锁外调用的commpletion回调
+            std::vector<std::pair<std::shared_ptr<RuntimeTask>, Completion>> forcedFailures;
+
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 stopping_ = true;
 
-                // 取消所有在途任务。executor_ 在周期性检查中看到 cancelled()后会尽快返回
-                // workerLoop 得以继续走到 join 点
+                // 取消所有在正在执行的任务
                 for (auto& token : activeTokens_)
                 {
                     token.cancel();
+                }
+
+                // FORCE 模式：把 pending 队列里的任务全部取出
+                // 标记失败，收集它们的 completion 回调
+                if (mode == ShutdownMode::FORCE)
+                {
+                    auto drained = scheduler_.drainAllPending();
+                    for (auto& task : drained)
+                    {
+                        if (!task) continue;
+
+                        // PENDING 不能直接 fail，先转 SCHEDULED
+                        task->schedule();
+                        task->fail("SERVER_SHUTTING_DOWN");
+
+                        auto it = completions_.find(task->id());
+                        if (it != completions_.end())
+                        {
+                            forcedFailures.emplace_back(task, std::move(it->second));
+                            completions_.erase(it);
+                        }
+                    }
+                }
+            }
+
+            // 锁外调用回调，避免 completion 内部拿 mutex_ 造成死锁
+            for (auto& [task, cb] : forcedFailures)
+            {
+                if (cb)
+                {
+                    try { cb(task, WorkerExecutionResult::FAILED); }
+                    catch (...) {}
                 }
             }
 

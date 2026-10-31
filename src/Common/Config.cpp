@@ -15,13 +15,16 @@ Config& Config::instance()
 void Config::parseArgs(int argc, char* argv[]) 
 {
     // 定义长选项
-    static struct option long_options[] = 
+    static struct option long_options[] =
     {
-        {"port",     required_argument, 0, 'p'},
-        {"io",       required_argument, 0, 'i'},
-        {"work",     required_argument, 0, 'w'},
-        {"help",     no_argument,       0, 'h'},
-        {0, 0, 0, 0}                     // 结束标记
+        {"port",       required_argument, 0, 'p'},
+        {"io",         required_argument, 0, 'i'},
+        {"work",       required_argument, 0, 'w'},
+        {"bind-host",  required_argument, 0, 'b'},
+        {"redis-host", required_argument, 0, 'r'},
+        {"redis-port", required_argument, 0, 'R'},
+        {"help",       no_argument,       0, 'h'},
+        {0, 0, 0, 0}
     };
     
 
@@ -39,15 +42,25 @@ void Config::parseArgs(int argc, char* argv[])
     optind = 1;
     int opt;
     // 循环解析参数，直到返回 -1
-    while ((opt = getopt_long(argc, argv, "p:i:w:h", long_options, nullptr)) != -1) 
+    while ((opt = getopt_long(argc, argv, "p:i:w:b:r:R:h", long_options, nullptr)) != -1)
     {
         switch (opt) 
         {
             case 'p': port = static_cast<uint16_t>(number(optarg, 65535)); break;
             case 'i': io_threads = number(optarg, 1024); break;
             case 'w': work_threads = number(optarg, 1024); break;
+            case 'b': bind_host = optarg; break;
+            case 'r': redis_host = optarg; break;
+            case 'R': redis_port = static_cast<uint16_t>(number(optarg, 65535)); break;
             case 'h':
-                std::cout << "Usage: EchoNetGateway [--port=8080] [--io=8] [--work=4]\n";
+                std::cout
+                    << "Usage: AgentRuntime [options]\n"
+                    << "  --port=N          listen port (default 8080)\n"
+                    << "  --io=N            IO threads (default 8)\n"
+                    << "  --work=N          worker threads (default 4)\n"
+                    << "  --bind-host=HOST  address registered to Redis (default 127.0.0.1)\n"
+                    << "  --redis-host=HOST Redis host (default 127.0.0.1)\n"
+                    << "  --redis-port=N    Redis port (default 6379)\n";
                 exit(0);
             default:
                 throw std::invalid_argument("unknown option or missing argument");

@@ -2,6 +2,8 @@
 #include "Metrics/Metrics.h"
 
 #include <utility>
+#include <vector>
+#include <memory>
 
 namespace runtime
 {
@@ -137,6 +139,35 @@ namespace runtime
 
         tasks_.erase(it);
         return true;
+    }
+
+    std::vector<std::shared_ptr<RuntimeTask>> Scheduler::drainAllPending()
+    {
+        std::lock_guard<std::mutex> lock (mutex_);
+
+        std::vector<std::shared_ptr<RuntimeTask>> drained;
+
+        // 遍历所有客户端队列，把任务对象取出来
+        for (auto& [clientId, queue] : perClientQueues_)
+        {
+            for (TaskId id : queue)
+            {
+                auto it = tasks_.find (id);
+                if (it != tasks_.end() && it->second)
+                {
+                    drained.push_back (it->second);
+                    tasks_.erase (it);
+                }
+            }
+        }
+
+        // 清空所有调度状态
+        perClientQueues_.clear();
+        roundRobin_.clear();
+        pendingTotal_ = 0;
+        Metrics::scheduler_pending.store (0, std::memory_order_relaxed);
+
+        return drained;
     }
 
     std::size_t Scheduler::taskCount() const 

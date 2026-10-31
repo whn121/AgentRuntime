@@ -10,7 +10,10 @@
 
 // 构造函数：转移 Channel 和 Protocol 的所有权，保存 EventLoop 指针
 Connection::Connection(int afd, std::unique_ptr<Channel> channel, EventLoop* loop, std::unique_ptr<Protocol> protocol)
-    : afd_(afd), loop_(loop), channel_(std::move(channel)), protocol_(std::move(protocol)) {}
+    : afd_(afd), loop_(loop), channel_(std::move(channel)), protocol_(std::move(protocol))
+{
+    Metrics::connection_constructed.fetch_add(1, std::memory_order_relaxed);
+}
 
 Connection::~Connection()
 {
@@ -20,6 +23,7 @@ Connection::~Connection()
         ::close(afd_);
         afd_ = -1;
     }
+    Metrics::connection_destructed.fetch_add(1, std::memory_order_relaxed);
 }
 
 // ---------- 读事件处理 ----------

@@ -1,15 +1,16 @@
-// tests/test_close_drain.cpp 的结构
+#include "Metrics/Metrics.h"
 #include "Net/Connection.h"
-#include "Reactor/EventLoop.h"
-#include "Reactor/Channel.h"
 #include "Protocol/MyProtocol.h"
+#include "Reactor/Channel.h"
+#include "Reactor/EventLoop.h"
 #include "ThreadPool/IoThreadPool.h"
 #include "ThreadPool/Task.h"
 #include "ThreadPool/TaskQueue.h"
+
 #include <atomic>
 #include <cassert>
 #include <chrono>
-#include <cstring>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
@@ -17,51 +18,63 @@
 int main()
 {
     std::atomic<int> closeCount{0};
-    std::atomic<int> fdClosed{0};
+    std::atomic<int> fdWasValidWhenClosed{0};
 
-    // 1. 一个 IO 线程的池
-    IoThreadPool pool(1);
+    const uint64_t constructedBefore = Metrics::connection_constructed.load();
+    const uint64_t destructedBefore = Metrics::connection_destructed.load();
 
-    // 2. workCallback：成功入队，但从不执行（模拟"任务在途"）
-    //    这样 taskRunning_ 永远是 true
-    pool.setCallBack([](Task&& task) {
-        // 模拟 Worker：执行任务并通知完成，使 taskRunning_ 归零。
-        if (task.run_) task.run_();
-        if (task.onComplete_) task.onComplete_();
-        return TaskQueue::PushResult::Success;
-    });
-
-    // 3. 连接工厂 + 关闭回调
-    pool.setbuildconn([](int fd, EventLoop* loop) {
-        return std::make_shared<Connection>(
-            fd, std::make_unique<Channel>(fd), loop, std::make_unique<MyProtocol>());
-    });
-    pool.setCloseCallback([&](int fd) {
-        closeCount.fetch_add(1);
-        if (fd >= 0) { ::close(fd); fdClosed.fetch_add(1); }
-    });
-    pool.setBusinessHandler([](std::shared_ptr<Connection>, const std::any&) {});
-
-    // 4. 通过 socketpair 造一个入站连接
     int sv[2];
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) return 1;
-    pool.submit(sv[0]);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    const int connFd = sv[0];
 
-    // 5. 发一个合法的 RUNTIME_TASK_REQ 帧，触发 enqueueTask → taskRunning_ == true
-    const std::string frame = MyProtocol::encodeMessage(
-        MyType::RUNTIME_TASK_REQ, /*id=*/1, /*payload=*/"hello");
-    (void)!::write(sv[1], frame.data(), frame.size());
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    {
+        IoThreadPool pool(1);
 
-    // 6. 触发停服。EventLoop::loop() 退出时应执行 1a-10 的兜底。
-    pool.stop();
+        pool.setCallBack([](Task&& task) {
+            if (task.run_) task.run_();
+            if (task.onComplete_) task.onComplete_();
+            return TaskQueue::PushResult::Success;
+        });
 
-    // 7. 断言
-    assert(closeCount.load() == 1);       // closeCallBack_ 恰好一次
-    assert(fdClosed.load() == 1);         // 底层 fd 被关闭一次
+        pool.setbuildconn([](int fd, EventLoop* loop) {
+            return std::make_shared<Connection>(
+                fd, std::make_unique<Channel>(fd), loop, std::make_unique<MyProtocol>());
+        });
 
-    // 清理：sv[1] 由测试关闭
-    ::close(sv[1]);
+        // 关键改动：closeCallback 不 close fd，只验证调用时刻 fd 仍然有效。
+        // 真正的 close 由 Connection::finishClose() 负责，避免 double close。
+        pool.setCloseCallback([&](int fd) {
+            closeCount.fetch_add(1);
+            if (fd >= 0 && fcntl(fd, F_GETFD) != -1)
+            {
+                fdWasValidWhenClosed.fetch_add(1);
+            }
+        });
+
+        pool.setBusinessHandler([](std::shared_ptr<Connection>, const std::any&) {});
+
+        pool.submit(connFd);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        pool.stop();
+        ::close(sv[1]);
+    }
+    // pool 已析构，EventLoop 已退出，所有 Connection 应已析构
+
+    // closeCallback 恰好一次，且调用时 fd 仍然有效（说明没有提前 close）
+    assert(closeCount.load() == 1);
+    assert(fdWasValidWhenClosed.load() == 1);
+
+    // finishClose 之后 fd 应该已经失效
+    assert(fcntl(connFd, F_GETFD) == -1);
+    assert(errno == EBADF);
+
+    // Connection 构造数 = 析构数，证明没有对象泄漏
+    const uint64_t constructed = Metrics::connection_constructed.load() - constructedBefore;
+    const uint64_t destructed = Metrics::connection_destructed.load() - destructedBefore;
+    assert(constructed == 1);
+    assert(destructed == 1);
+    assert(constructed == destructed);
+
     return 0;
 }

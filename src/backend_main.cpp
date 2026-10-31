@@ -29,10 +29,10 @@ namespace
     {
     public:
         explicit BackendRegistration(uint16_t port)
-            : pool_("127.0.0.1", 6379, 1),
+            : pool_(Config::instance().redis_host, Config::instance().redis_port, 1),
             key_("services:backend_service:node-" + std::to_string(port)),
             owner_key_("backend:owners:node-" + std::to_string(port)),
-            address_("127.0.0.1:" + std::to_string(port))
+            address_(Config::instance().bind_host + ":" + std::to_string(port))
         {
             std::ifstream uuid("/proc/sys/kernel/random/uuid");
             if (!(uuid >> token_) || token_.empty())

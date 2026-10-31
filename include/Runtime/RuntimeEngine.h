@@ -32,8 +32,16 @@ namespace runtime
         // clientId 用于公平调度与按客户端的队列配额。
         bool submit(Scheduler::ClientId clientId, std::string input, Completion completion);
 
-        // 停止接收新任务, 等待已接收任务执行结束
-        void stop();
+        // 关闭模式。GRACEFUL：等待已提交任务执行完；FORCE：立即丢弃所有
+        // 尚未执行的任务，通知它们的 completion 回调以 FAILED，然后退出
+        enum class ShutdownMode
+        {
+            GRACEFUL,
+            FORCE
+        };
+
+        // mode 默认 GRACEFUL，向后兼容
+        void stop(ShutdownMode mode = ShutdownMode::GRACEFUL);
 
         std::size_t pendingCount() const;
         std::size_t activeCount() const;

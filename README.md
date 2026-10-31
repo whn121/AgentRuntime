@@ -73,7 +73,7 @@ cmake --build build-asan -j
 ctest --test-dir build-asan --output-on-failure
 ```
 
-**结果**：11 个 CTest，Release 与 ASan/UBSan 构建均全通过，Release 0 warning。端到端链路与四个故障场景实测输出归档在 `results/`：
+**结果**：12 个 CTest，Release 与 ASan/UBSan 构建均全通过，Release 0 warning。端到端链路与四个故障场景实测输出归档在 `results/`：
 
 - `e2e_success.txt` —— Gateway → Backend → RuntimeEngine → 假 Qwen → 客户端，`type=5` 正常返回；
 - `cancel_latency.txt` —— 关闭时取消在途模型调用，实测 108ms 退出（对比 120s 超时兜底）；
@@ -85,14 +85,15 @@ ctest --test-dir build-asan --output-on-failure
 - `test_close_drain`：停服时连接清理恰好一次（并发触发、迟到回调、EOF 收尾）；
 - `test_runtime_cancel`：取消令牌从 `stop()` 传播到 `executor_`，200ms 阈值内完成；
 - `test_scheduler_fairness`：一个客户端持续提交时另一客户端不被饿死，单客户端配额生效；
-- `test_read_exception`：`Connection::read` 抛异常不会拖垮 `EventLoop`。
+- `test_read_exception`：`Connection::read` 抛异常不会拖垮 `EventLoop`；
+- `test_force_shutdown`：`FORCE` 模式下 5 个 pending 任务全部收到 `SERVER_SHUTTING_DOWN`，正在执行的任务被取消，毫秒级退出。
 
 性能数字均为单次观测，环境为 WSL2 + 本地回环，不代表生产规模。
 
 ## 设计取舍与已知边界
 
-1. **`stop()` 只取消正在执行的任务，不取消已提交未调度的任务**
-   已接受的任务在关闭期间仍会完成，避免“提交成功但响应丢失”的不一致。代价是如果 `executor_` 在 pending 任务上阻塞，`join()` 仍可能等待。若需要“立即丢弃未执行任务”的硬关闭模式，扩展点在 `Scheduler` 暴露 pending 令牌。
+1. **`stop(GRACEFUL)` 取消正在执行的任务，`stop(FORCE)` 额外清空 pending 队列**
+   `GRACEFUL` 下正在执行的任务会被 `cancel()`——这是有意为之：模型调用可能阻塞 120 秒，等它完成不叫“优雅关闭”，叫“关闭卡死”。`pending_queue_` 中的任务不受影响，会继续执行完毕，避免“提交成功但响应丢失”的不一致。`FORCE` 下额外调用 `Scheduler::drainAllPending()` 清空 pending 队列，每个任务 `fail("SERVER_SHUTTING_DOWN")`，`completion` 回调收到 `FAILED`。**两种模式都依赖 `executor_` 协作式响应取消令牌**——不检查令牌的第三方库，`join()` 仍会等它自然返回。
 
 2. **`ClientId` 使用 fd，依赖“任务终态后 `eraseTerminal` 立即移除”**
    当前流程下 fd 复用时旧任务已清理，不会混排。若未来引入长生命周期任务或任务取消，需要替换为不依赖 fd 的唯一 ID。
@@ -106,7 +107,10 @@ ctest --test-dir build-asan --output-on-failure
 5. **取消在真实网络阻塞场景的边界未做完整实测**
    只测了“服务端接受连接但永不响应”场景。TLS 握手、DNS 解析卡住等路径的取消耗时取决于 libcurl 内部行为，108ms 不能外推。
 
-6. **未实现**：TLS、跨网关高可用、跨节点任务调度、推理引擎内部优化（CUDA / 算子 / 批处理）。
+6. **客户端断开后，已提交给 RuntimeEngine 的 pending 任务不会自动取消**
+   任务继续执行，`completion` 回调调 `sendResponse` 时连接已 `Closing`，响应被静默丢弃。这不是正确性 bug（不会写坏连接），是资源浪费。修复需要 `RuntimeEngine` 暴露 `cancelByClient(ClientId)`，并在 `Connection::close()` 时调用，涉及 `BusinessHandler` 签名改动。当前推迟。
+
+7. **未实现**：TLS、跨网关高可用、跨节点任务调度、推理引擎内部优化（CUDA / 算子 / 批处理）。
 
 ## 技术栈
 

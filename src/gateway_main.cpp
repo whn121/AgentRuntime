@@ -57,7 +57,8 @@ int main(int argc, char* argv[]) try
     }
 
     // 1.启动服务发现
-    auto redis_pool = std::make_shared<RedisPool>("127.0.0.1", 6379, 4);
+    const auto& cfg = Config::instance();
+    auto redis_pool = std::make_shared<RedisPool>(cfg.redis_host, cfg.redis_port, 4);
     ServiceRegistry registry(redis_pool, "backend_service");
     registry.Start(2);
 

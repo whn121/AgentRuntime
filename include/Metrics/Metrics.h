@@ -55,6 +55,11 @@ struct Metrics {
     // 如果以后要精确的"当前最大值"这个不够, 得另外想办法
     static std::atomic<uint64_t> conn_max_send_queue_bytes;
 
+    // Connection 构造/析构次数。两者相等说明所有 Connection 都被释放了，
+    // 没有被 pendingConnections_ 等容器无限持有。
+    static std::atomic<uint64_t> connection_constructed;
+    static std::atomic<uint64_t> connection_destructed;
+
     // 软背压暂停读取的次数
     static std::atomic<uint64_t> conn_backpressure_paused;
 
