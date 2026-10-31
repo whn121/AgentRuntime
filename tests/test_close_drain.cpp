@@ -19,6 +19,8 @@ int main()
 {
     std::atomic<int> closeCount{0};
     std::atomic<int> fdWasValidWhenClosed{0};
+    std::atomic<int> cancelCount{0};
+    std::atomic<int> cancelArgWasOriginalFd{0};
 
     const uint64_t constructedBefore = Metrics::connection_constructed.load();
     const uint64_t destructedBefore = Metrics::connection_destructed.load();
@@ -36,11 +38,22 @@ int main()
             return TaskQueue::PushResult::Success;
         });
 
-        pool.setbuildconn([](int fd, EventLoop* loop) {
-            return std::make_shared<Connection>(
-                fd, std::make_unique<Channel>(fd), loop, std::make_unique<MyProtocol>());
-        });
+        pool.setbuildconn([&](int fd, EventLoop* loop) 
+        {
+            auto conn = std::make_shared<Connection>(fd, std::make_unique<Channel>(fd), loop, std::make_unique<MyProtocol>());
 
+            // 测试用的 cancelHook：验证恰好一次、参数是原始 fd（不是 -1）
+            conn->setCancelHook([&](int clientId) 
+            {
+                cancelCount.fetch_add(1);
+                if (clientId == connFd)
+                {
+                    cancelArgWasOriginalFd.fetch_add(1);
+                }
+            });
+
+            return conn;
+        });
         // 关键改动：closeCallback 不 close fd，只验证调用时刻 fd 仍然有效。
         // 真正的 close 由 Connection::finishClose() 负责，避免 double close。
         pool.setCloseCallback([&](int fd) {

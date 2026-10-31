@@ -43,6 +43,10 @@ namespace runtime
         // mode 默认 GRACEFUL，向后兼容
         void stop(ShutdownMode mode = ShutdownMode::GRACEFUL);
 
+        // 取消某个客户端的所有待调度任务 正在执行的任务不受影响
+        // 被取消的任务会收到 FAILED 和错误码 "CLIENT_DISCONNECTED"
+        void cancelByClient(Scheduler::ClientId clientId);
+
         std::size_t pendingCount() const;
         std::size_t activeCount() const;
 

@@ -170,6 +170,49 @@ namespace runtime
         return drained;
     }
 
+     std::vector<std::shared_ptr<RuntimeTask>> Scheduler::drainByClient(ClientId clientId)
+    {
+        std::lock_guard<std::mutex> lock (mutex_);
+
+        std::vector<std::shared_ptr<RuntimeTask>> drained;
+
+        auto it = perClientQueues_.find (clientId);
+        if (it == perClientQueues_.end())
+        {
+            return drained;
+        }
+
+        const std::size_t count = it->second.size();
+
+        for (TaskId id : it->second)
+        {
+            auto taskIt = tasks_.find (id);
+            if (taskIt != tasks_.end() && taskIt->second)
+            {
+                drained.push_back (taskIt->second);
+                tasks_.erase (taskIt);
+            }
+        }
+
+        perClientQueues_.erase (it);
+
+        // pendingTotal_ 是 size_t，避免下溢
+        pendingTotal_ = (pendingTotal_ >= count) ? (pendingTotal_ - count) : 0;
+        Metrics::scheduler_pending.store (pendingTotal_, std::memory_order_relaxed);
+
+        // roundRobin_ 里每个 clientId 最多一个条目
+        for (auto rIt = roundRobin_.begin(); rIt != roundRobin_.end(); ++rIt)
+        {
+            if (*rIt == clientId)
+            {
+                roundRobin_.erase (rIt);
+                break;
+            }
+        }
+
+        return drained;
+    }
+
     std::size_t Scheduler::taskCount() const 
     {
         std::lock_guard<std::mutex> lock(mutex_);

@@ -157,9 +157,18 @@ int main(int argc, char* argv[]) try
     );
 
     Server server;
-    server.setcreator([](int fd, EventLoop* loop) 
+        server.setcreator([&runtimeEngine](int fd, EventLoop* loop) 
     {
-        return std::make_shared<Connection>(fd, std::make_unique<Channel>(fd), loop, std::make_unique<MyProtocol>());
+        auto conn = std::make_shared<Connection>(fd, std::make_unique<Channel>(fd), loop, std::make_unique<MyProtocol>());
+
+        // 连接关闭时通知 RuntimeEngine 取消该 clientId 的待调度任务。
+        // clientId 就是 fd，和 businessHandler 里传给 submit 的值一致。
+        conn->setCancelHook([&runtimeEngine](int clientId)
+        {
+            runtimeEngine.cancelByClient(clientId);
+        });
+
+        return conn;
     });
 
     server.setBeforeIoShutdownCallback([&runtimeEngine]() 

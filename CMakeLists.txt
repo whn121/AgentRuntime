@@ -128,3 +128,13 @@ add_executable(test_force_shutdown tests/test_force_shutdown.cpp)
 target_link_libraries(test_force_shutdown PRIVATE echonet_core)
 target_compile_options(test_force_shutdown PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME force_shutdown COMMAND test_force_shutdown)
+
+add_executable(test_cancel_by_client tests/test_cancel_by_client.cpp)
+target_link_libraries(test_cancel_by_client PRIVATE echonet_core)
+target_compile_options(test_cancel_by_client PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME cancel_by_client COMMAND test_cancel_by_client)
+
+add_executable(test_cancel_by_client_e2e tests/test_cancel_by_client_e2e.cpp)
+target_link_libraries(test_cancel_by_client_e2e PRIVATE echonet_core)
+target_compile_options(test_cancel_by_client_e2e PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME cancel_by_client_e2e COMMAND test_cancel_by_client_e2e)

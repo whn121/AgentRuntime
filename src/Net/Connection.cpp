@@ -10,7 +10,7 @@
 
 // 构造函数：转移 Channel 和 Protocol 的所有权，保存 EventLoop 指针
 Connection::Connection(int afd, std::unique_ptr<Channel> channel, EventLoop* loop, std::unique_ptr<Protocol> protocol)
-    : afd_(afd), loop_(loop), channel_(std::move(channel)), protocol_(std::move(protocol))
+    : afd_(afd), clientId_(afd), loop_(loop), channel_(std::move(channel)), protocol_(std::move(protocol))
 {
     Metrics::connection_constructed.fetch_add(1, std::memory_order_relaxed);
 }
@@ -401,6 +401,10 @@ void Connection::handleClose()
 
     LOG_INFO("handleClose: fd=" + std::to_string(afd_));
 
+    // 状态已经是 Closing，completion 回调里 sendResponse 会因 isConnected() 返回 false
+    // 而静默丢弃。此时触发 cancelHook 是安全的——不会误发 CLIENT_DISCONNECTED 响应。
+    notifyCancelOnce();
+
     // 优雅关闭写端：告诉对端我们不再发数据
     // 注意：shutdown 不关闭 fd，真正的 close 在 finishClose()
     if (afd_ != -1)
@@ -456,6 +460,19 @@ void Connection::handleClose()
     if (closeCallBack_)
     {
         closeCallBack_(afd_);
+    }
+}
+
+void Connection::notifyCancelOnce()
+{
+    // 所有关闭路径（close / read 错误 / write 错误 / 协议错误 / forceCloseOnLoopStop）
+    // 最终都走 handleClose 或 forceCloseOnLoopStop，都调用本函数。
+    // 用不可变的 clientId_，不用 afd_——handleClose 执行到后面 afd_ 可能已经被置 -1。
+    // CAS 保证 cancelHook_ 恰好一次。
+    bool expected = false;
+    if (cancelHook_ && cancelHookCalled_.compare_exchange_strong(expected, true))
+    {
+        cancelHook_(clientId_);
     }
 }
 
@@ -559,6 +576,10 @@ void Connection::forceCloseOnLoopStop()
     // 强制进入Closing 若已经是closing/Closed, CAS失败, 继续走认领
     State expected = State::Connected;
     state_.compare_exchange_strong (expected, State::Closing);
+
+    // loop 停止时强制关闭。这条路径不经过 handleClose，需要单独触发 cancelHook。
+    // 如果之前已经通过 close() 或错误路径进入过 handleClose，cancelHookCalled_ CAS 会拦住。
+    notifyCancelOnce();
 
     // 标记待最终关闭：即使之前从未调用过 close()，也要让 finalizeCloseIfPending 认领
     {

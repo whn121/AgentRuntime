@@ -51,6 +51,10 @@ namespace runtime
         // FORCE 关闭时用
         std::vector<std::shared_ptr<RuntimeTask>> drainAllPending();
 
+        // 取出某个客户端的所有待调度任务。用于客户端断开时清理。
+        // 被取出的任务从 tasks_ 和 perClientQueues_ 中移除。
+        std::vector<std::shared_ptr<RuntimeTask>> drainByClient(ClientId clientId);
+
         // 当前进程中保存的任务总数，包括已经结束的任务。
         std::size_t taskCount() const;
 

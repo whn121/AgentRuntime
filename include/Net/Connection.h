@@ -49,6 +49,10 @@ public:
 
     void setBusinessHandler(BusinessHandler h) { businessHandler_ = std::move(h); }
 
+    // 客户端断开时调用，用于通知上层取消该连接关联的待调度任务。
+    // 保证只调用一次。
+    void setCancelHook(std::function<void(int)> hook) { cancelHook_ = std::move(hook); }
+
     // 活跃检测,超时踢人 减少一个额外线程的开销
     void updateActiveTime() { last_active_ = std::chrono::steady_clock::now(); }
 
@@ -82,7 +86,8 @@ public:
 
     
 private:
-    int afd_;                                  // socket 文件描述符
+    int afd_;                                  // socket 文件描述符, finishClose 后置 -1
+    const int clientId_;                       // 构造时的 fd, 永不改变。cancelHook 等需要稳定标识的场景用它
     EventLoop* loop_;                          // 所属的事件循环（该连接所有事件在此 loop 中处理）
     Buffer inBuffer_;                          // 输入缓冲区
     Buffer outBuffer_;                         // 输出缓冲区
@@ -109,6 +114,8 @@ private:
     std::atomic<size_t> pendingSendCallbacks_{0};
     
     void handleClose();      // 统一关闭入口 ,进入关闭状态,禁止新的io操作,移除epoll监听
+
+    void notifyCancelOnce();  // 所有关闭路径统一触发一次 cancelHook_
 
     void handleTaskSubmitFailure(TaskQueue::PushResult result, bool preserveRunningTask = false); // 处理工作线程池拒绝任务：停止调度、取消等待任务并请求关闭
 
@@ -162,4 +169,10 @@ private:
 
     // 根据发送队列水位, 决定暂停还是恢复读事件
     void updateReadInterestForBackpressure();
+
+    // 取消回调。close() 里调用一次，通知上层（RuntimeEngine）清理。
+    std::function<void(int)> cancelHook_;
+
+    // 保证 cancelHook_ 只调一次。
+    std::atomic<bool> cancelHookCalled_{false};
 };

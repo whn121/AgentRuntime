@@ -267,6 +267,49 @@ namespace runtime
         });
     }
 
+    void RuntimeEngine::cancelByClient(Scheduler::ClientId clientId)
+    {
+        // 收集需要在锁外调用的 completion 回调
+        std::vector<std::pair<std::shared_ptr<RuntimeTask>, Completion>> cancelled;
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            // 停止中时不动，stop() 会处理所有 pending
+            if (stopping_)
+            {
+                return;
+            }
+
+            auto drained = scheduler_.drainByClient(clientId);
+            for (auto& task : drained)
+            {
+                if (!task) continue;
+
+                // PENDING 不能直接 fail，先转 SCHEDULED
+                task->schedule();
+                task->fail("CLIENT_DISCONNECTED");
+
+                auto it = completions_.find(task->id());
+                if (it != completions_.end())
+                {
+                    cancelled.emplace_back(task, std::move(it->second));
+                    completions_.erase(it);
+                }
+            }
+        }
+
+        // 锁外调回调，避免 completion 内部拿 mutex_ 造成死锁
+        for (auto& [task, cb] : cancelled)
+        {
+            if (cb)
+            {
+                try { cb(task, WorkerExecutionResult::FAILED); }
+                catch (...) {}
+            }
+        }
+    }
+
     std::size_t RuntimeEngine::pendingCount() const
     {
         return scheduler_.pendingCount();
