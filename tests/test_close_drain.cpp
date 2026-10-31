@@ -89,5 +89,9 @@ int main()
     assert(destructed == 1);
     assert(constructed == destructed);
 
+    // cancelHook 恰好一次，且参数是原始 fd（不是 -1）
+    assert(cancelCount.load() == 1);
+    assert(cancelArgWasOriginalFd.load() == 1);
+
     return 0;
 }
