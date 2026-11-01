@@ -3,7 +3,7 @@
 
 AsyncLogger::AsyncLogger() 
 {
-    file_.open("echonet.log", std::ios::app);
+    file_.open("agentruntime.log", std::ios::app);
     write_thread_ = std::thread([this] { writeLoop(); });
 }
 
@@ -25,6 +25,17 @@ void AsyncLogger::log(Level level, const std::string& msg)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stop_) return;
+        if (queue_.size() >= MAX_QUEUE_SIZE) 
+        {
+            if (level != ERROR) 
+            {
+                // INFO/WARN：队列满时直接丢弃
+                dropped_count_.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+            // ERROR：保留，丢弃最老的一条腾位置
+            queue_.pop();
+        }
         queue_.push(std::move(line));
     }
     cv_.notify_one();
@@ -50,6 +61,15 @@ void AsyncLogger::writeLoop()
             local.pop();
         }
         file_.flush();
+
+        // 报告被丢弃的日志条数（每批一次）
+        size_t dropped = dropped_count_.exchange(0, std::memory_order_relaxed);
+        if (dropped > 0) 
+        {
+            file_ << "[" << currentTime() << "] [WARN] AsyncLogger: "
+                  << dropped << " log entries dropped due to queue overflow\n";
+            file_.flush();
+        }
     }
 }
 

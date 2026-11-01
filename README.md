@@ -19,7 +19,7 @@ Client ──TCP──▶ Gateway ──TCP──▶ Backend ──▶ RuntimeEn
                   │                 │              ├── Worker  (状态机 + 取消)
                   │                 │              └── LlamaClient (HTTP + 进度回调)
                   │                 │
-                  │                 └── EchoNet 网络底座（Reactor / epoll）
+                  │                 └── Reactor 网络底座（Reactor / epoll）
                   └── Redis 服务发现 + 请求关联 + 健康检查
 ```
 

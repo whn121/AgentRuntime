@@ -10,6 +10,7 @@
 #include <iomanip>
 #include <chrono>
 #include <sstream>
+#include <cstddef>
 
 
 class AsyncLogger
@@ -37,6 +38,10 @@ private:
     std::atomic<bool> stop_{false};   // 停止标志
     std::thread write_thread_;        // 日志线程
     std::ofstream file_;              // 输出文件
+
+    // 队列上限：超过时丢弃 INFO/WARN，ERROR 保留（丢最老的）
+    static constexpr size_t MAX_QUEUE_SIZE = 100000;
+    std::atomic<size_t> dropped_count_{0};   // 被丢弃的日志条数
 
 };
 
