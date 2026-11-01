@@ -1,6 +1,27 @@
 # AgentRuntime
 
-C++17 实现的 Agent 执行运行时：在 Reactor 网络底座上构建 Gateway–Backend–Runtime 执行链路，处理并发连接、任务调度、模型 HTTP 调用，并在服务关闭或客户端断开时对在途任务做协作式取消。
+**（LLM 推理任务运行时，不是 Agent 框架）**
+
+C++17 实现的推理任务运行时：在 Reactor 网络底座上构建 Gateway–Backend–Runtime 执行链路，处理并发连接、任务调度、模型 HTTP 调用，并在服务关闭或客户端断开时对在途任务做协作式取消。
+
+> **名字里的 "Agent" 指"为 Agent 类负载提供长任务执行与取消能力"，不是指本项目实现了 tool call /
+> 多轮规划 / 记忆。** 本项目不含任何 Agent 语义：没有 function calling、没有 Plan/ReAct 循环、
+> 没有上下文管理；`LlamaClient` 就是一个 OpenAI 兼容的 HTTP 客户端。被问到时按这句话回答，
+> 不要把它说成 Agent 框架。
+
+## 项目沿革
+
+网络底座（Reactor / epoll / 连接管理 / 线程池 / 二进制协议 / Redis 服务发现 / 日志 / 指标）来自
+作者更早的 IM + AI 聊天服务 **EchoNet**。本项目在此基础上重写执行层：
+
+- 新增 `Runtime/`：`Scheduler`（按客户端轮转 + 单客户端配额）、`Worker`、`RuntimeEngine`、`LlamaClient`；
+- 新增 `backend_main`，把"网关 → 后端 → 运行时 → 模型服务"串成可运行链路；
+- 改造 `Connection` 的关闭状态机：统一 `closeCallbackPending_` 认领入口、`cancelHook_` 恰好一次、
+  用不可变 `clientId_` 替代 `finishClose` 之后的 `afd_`；
+- 新增协作式取消、三级发送背压、9 个运行时指标。
+
+**网关与运行时是新写的，网络底座是复用的。** 这个区分要在面试里主动说清楚，别把 Reactor 说成
+为这个项目从零写的。
 
 ## 核心特性
 
@@ -44,7 +65,28 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-产物：`build/EchoNetGateway`、`build/EchoNetBackend`。
+产物：`build/AgentRuntimeGateway`、`build/AgentRuntimeBackend`。
+
+### 用 Sanitizer 构建
+
+```bash
+# ASan + UBSan：查内存越界和未定义行为
+cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g"
+cmake --build build-asan -j && ctest --test-dir build-asan --output-on-failure
+
+# TSan：查数据竞争（本项目的卖点是并发与关闭路径，改完并发相关代码必须跑这个）
+cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DENABLE_TSAN=ON
+cmake --build build-tsan -j && ctest --test-dir build-tsan --output-on-failure
+```
+
+> ASan 不查数据竞争。早期版本只跑了 ASan/UBSan，所以"没有 race"这个结论一直缺证据；
+> 现在有 `-DENABLE_TSAN=ON` 这个开关，TSan 与 ASan 不能同时开。
+>
+> **TSan 在这台机器上必须先关掉 ASLR**：直接跑会有 11 个用例报
+> `FATAL: ThreadSanitizer: unexpected memory mapping 0x...`，这是新内核 ASLR 与 TSan
+> shadow 内存冲突，**不是数据竞争**。用 `setarch $(uname -m) -R ctest ...` 包一层即可，
+> 关掉 ASLR 后 15/15 全过、零 race 报告。
 
 ## 运行
 
@@ -53,10 +95,10 @@ cmake --build build -j
 redis-server --daemonize yes
 
 # 启动 Backend（监听 9001，需先有兼容 OpenAI Chat Completions 的服务在 8081）
-./build/EchoNetBackend &
+./build/AgentRuntimeBackend &
 
 # 启动 Gateway（监听 8080）
-./build/EchoNetGateway &
+./build/AgentRuntimeGateway &
 ```
 
 配置参数（`--help` 查看完整列表）：
@@ -85,7 +127,8 @@ cmake --build build-asan -j
 ctest --test-dir build-asan --output-on-failure
 ```
 
-**结果**：14 个 CTest，Release 与 ASan/UBSan 构建均全通过，Release 0 warning。端到端链路与四个故障场景实测输出归档在 `results/`：
+**结果**：15 个 CTest——Release 15/15、ASan+UBSan 15/15、TSan 15/15（需 `setarch -R`，
+见上）；Release 0 error、0 warning。端到端链路与四个故障场景实测输出归档在 `results/`：
 
 - `e2e_success.txt` —— Gateway → Backend → RuntimeEngine → 假 Qwen → 客户端，`type=5` 正常返回；
 - `cancel_latency.txt` —— 关闭时取消在途模型调用，实测 108ms 退出（对比 120s 超时兜底）；
@@ -100,7 +143,12 @@ ctest --test-dir build-asan --output-on-failure
 - `test_read_exception`：`Connection::read` 抛异常不会拖垮 `EventLoop`；
 - `test_force_shutdown`：`FORCE` 模式下 5 个 pending 任务全部收到 `SERVER_SHUTTING_DOWN`，正在执行的任务被取消，毫秒级退出；
 - `test_cancel_by_client`：`RuntimeEngine::cancelByClient` 单元测试——pending 队列里的 5 个任务收到 `CLIENT_DISCONNECTED`，正在执行的 1 个任务成功完成，另一个 `clientId` 不受影响；
-- `test_cancel_by_client_e2e`：端到端验证——客户端断开触发 `Connection` 的 EOF 路径，验证 `handleClose → notifyCancelOnce → cancelHook_ → cancelByClient` 整条链路，5 个 pending 任务收到 `CLIENT_DISCONNECTED`，正在执行的 1 个任务成功完成。
+- `test_cancel_by_client_e2e`：端到端验证——客户端断开触发 `Connection` 的 EOF 路径，验证 `handleClose → notifyCancelOnce → cancelHook_ → cancelByClient` 整条链路，5 个 pending 任务收到 `CLIENT_DISCONNECTED`，正在执行的 1 个任务成功完成；
+- `test_stop_escalation`：`stop()` 的幂等性与重入——重复 stop 不崩不挂；FORCE 排空后每个 completion 恰好回调一次（重复调用不翻倍）；在 completion 回调里（worker 线程）调 `stop()` 不会 join 自己导致死锁。
+
+> **所有测试目标都加了 `-UNDEBUG`。** 这些测试大量使用 `assert`，而 `CMAKE_BUILD_TYPE=Release`
+> 会带 `-DNDEBUG` 把断言整体编译掉，测试就变成"永远通过"。这个问题是在 2026-11-01 的修复里发现的，
+> 意味着之前 README 里"Release 构建全部通过"那句话的含金量要打折。
 
 性能数字均为单次观测，环境为 WSL2 + 本地回环，不代表生产规模。
 
@@ -125,6 +173,77 @@ ctest --test-dir build-asan --output-on-failure
    `handleClose` 的 CAS 成功后调用 `notifyCancelOnce()`，用不可变的 `clientId_`（构造时的 fd）而非 `afd_`——`finishClose` 之后 `afd_` 已被置 -1。`cancelHookCalled_` 的 CAS 保证只调一次。`close()` 本身不再调 `cancelHook_`，因为此时 `state_` 还是 `Connected`，`completion` 回调里 `sendResponse` 会发出无效的 `CLIENT_DISCONNECTED` 响应。`forceCloseOnLoopStop()` 也单独调用 `notifyCancelOnce()`——这条路径不经过 `handleClose`，但需要统一取消语义。
 
 7. **未实现**：TLS、跨网关高可用、跨节点任务调度、推理引擎内部优化（CUDA / 算子 / 批处理）。
+
+## 修复记录（2026-11-01）
+
+### 1. `stop()` 用 `std::call_once` 包住整个关闭流程
+
+- **问题**：第一个调用者的 `ShutdownMode` 决定了之后所有的行为——先 `stop(GRACEFUL)` 成功，
+  后面的 `stop(FORCE)` 就是空操作，无法升级；如果在 worker 线程里调 `stop()`（例如
+  completion 回调里），会对自身 `join()`，抛出的 `std::system_error` 被外层的
+  `catch (...) {}` 吞掉，关闭流程悄悄中断；关闭标志和"只 join 一次"绑在一起，
+  可重入性完全靠 `call_once` 兜底。
+- **修复**：
+  1. 把流程拆成两段——"置 `stopping_` + 取消令牌 + FORCE 排空（`forceDrained_` 保证只做一次）"
+     和"join（`joinMutex_` + `joined_` 保护，只做一次）"；
+  2. `stop()` 可重复调用、`FORCE` 可以在 `GRACEFUL` 之后升级；
+  3. 新增 `isWorkerThread()`：在 worker 线程里调用时只发信号直接返回，`join` 交给析构函数，
+     避免自 join。
+- **回归测试**：`tests/test_stop_escalation.cpp`（重复 stop 不崩不挂；FORCE 后每个 completion
+  恰好回调一次；completion 里调 stop 不死锁）。
+
+### 2. Release 构建下测试断言被编译掉
+
+- **问题**：14 个测试大量使用 `assert()`，而 `-DCMAKE_BUILD_TYPE=Release` 会带 `-DNDEBUG`，
+  断言整体消失，CTest 恒绿。
+- **修复**：CMake 里给所有测试目标统一加 `-UNDEBUG`。
+- **影响**：README 里"Release 构建全部通过"这句话从此才有意义；修复前只能说"Release 下能跑通"。
+
+### 3. 仓库卫生
+
+- 删除 5MB 的 `echonet.log`、`agentruntime.log`、`tests/__pycache__/`（这些本来就在
+  `.gitignore` 里，但一直躺在工作区）。
+- 顺手核对了编码：`results/*.txt` 和 git commit message **都是合法 UTF-8**，
+  之前看到的"乱码"是用 Windows PowerShell 5.1 的默认 ANSI 编码去读造成假象，不是仓库问题。
+
+### 4. 文档与代码对齐
+
+- README 的产物名还停留在 `EchoNetGateway` / `EchoNetBackend`，CMake 目标早已改成
+  `AgentRuntimeGateway` / `AgentRuntimeBackend`；
+- 测试数量 14 → 15；
+- 补充"项目沿革"与"这不是 Agent 框架"两段说明。
+
+### 5. e2e 断言写死了调度时序
+
+- **问题**：`test_cancel_by_client_e2e` 断言 `succeeded == 1 && cancelled == 5`。但"断开
+  的一瞬间第 2 个任务有没有被 worker 取走"取决于调度时序——实测同一份代码重复 20 次，
+  5 次是 1 成功 5 取消、15 次是 2 成功 4 取消。`-UNDEBUG` 加上之后（见第 2 条）这条断言
+  才真正执行，于是 Release 下必挂。
+- **修复**：改成断言"守恒"——每个任务要么成功、要么被取消，不能丢、不能重复：
+  `succeeded >= 1 && cancelled >= 1 && succeeded + cancelled == 6`。
+- **顺带说明**：这不是产品 bug。把断言换成打印后，`succeeded + cancelled` 恒为 6，
+  说明取消链路没有丢任务。修完 Release 15/15。
+
+### 6. `read()` 返回值告警
+
+- **问题**：`EventLoop.cpp` 的 eventfd 唤醒分支调 `read()` 时没检查返回值，GCC 13 默认
+  开 `-Wunused-result`，Release 构建有 1 条告警。
+- **修复**：显式接住返回值并 `(void)` 掉，说明"eventfd 读失败不影响后面取任务"。
+  现在 Release 0 warning。
+
+### 7. TSan 已实跑
+
+- **结果**：`-DENABLE_TSAN=ON` 构建成功，`setarch $(uname -m) -R ctest` 下 15/15 通过，
+  **没有任何 data race 报告**。
+- **注意**：不关 ASLR 会有 11 个用例报 `unexpected memory mapping`，那是内核/Tsan 的
+  环境问题，不要误判成代码有竞争。
+
+### 仍然没做的（别在面试里说做了）
+
+- **`LlamaClient` 的真实阻塞路径未测**：只测了"服务端接受连接但永不响应"，
+  TLS 握手、DNS 解析卡住时 `108ms` 不能外推。
+- **跨网关高可用、TLS、跨节点调度**：没做。
+- **没有压测数据**：15 个测试都是功能/故障路径，没有 QPS、P99、长稳测试。
 
 ## 技术栈
 

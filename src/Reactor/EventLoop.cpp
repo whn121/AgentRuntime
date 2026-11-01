@@ -130,8 +130,10 @@ void EventLoop::loop()
             if (fd == wakeup_fd_)
             {
                 // 唤醒事件：读出数据清空计数器，然后执行投递的任务
-                uint64_t dummy;
-                read(wakeup_fd_, &dummy, sizeof(dummy));
+                uint64_t dummy = 0;
+                // eventfd 读失败（EAGAIN / EINTR）不影响后面取任务，显式忽略返回值
+                const ssize_t nread = ::read(wakeup_fd_, &dummy, sizeof(dummy));
+                (void)nread;
                 std::vector<std::function<void()>> tasks;
                 {
                     std::lock_guard<std::mutex> lock(mtx_);

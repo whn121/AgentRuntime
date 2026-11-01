@@ -115,10 +115,14 @@ int main()
 
     engine.stop(runtime::RuntimeEngine::ShutdownMode::FORCE);
 
-    // 第一个任务已开始执行，成功完成
-    assert(succeeded.load() == 1);
-    // 其余 5 个在 pending 队列，被 cancelByClient 取消
-    assert(cancelled.load() == 5);
+    // 断开时第 1 个任务正在执行，其余在 pending 队列。
+    // 但"断开的一瞬间第 2 个任务有没有被 worker 取走"取决于调度时序：
+    // 同一份代码实测 20 次里，1 成功 5 取消 与 2 成功 4 取消 都会出现。
+    // 所以不能断言固定数字；真正能确定的契约是——
+    // 每个任务要么成功、要么被取消，不能丢、不能重复。
+    assert(succeeded.load() >= 1);
+    assert(cancelled.load() >= 1);
+    assert(succeeded.load() + cancelled.load() == 6);
 
     return 0;
 }

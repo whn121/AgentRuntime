@@ -208,63 +208,84 @@ namespace runtime
         }
     }
 
+        bool RuntimeEngine::isWorkerThread() const
+    {
+        const std::thread::id self = std::this_thread::get_id();
+        for (const auto& worker : workers_)
+        {
+            if (worker.get_id() == self) return true;
+        }
+        return false;
+    }
+
     void RuntimeEngine::stop(ShutdownMode mode)
     {
-        std::call_once(stopOnce_, [this, mode]
+        // 需要在锁外调用的 completion 回调
+        std::vector<std::pair<std::shared_ptr<RuntimeTask>, Completion>> forcedFailures;
+
         {
-            // 收集需要在锁外调用的commpletion回调
-            std::vector<std::pair<std::shared_ptr<RuntimeTask>, Completion>> forcedFailures;
+            std::lock_guard<std::mutex> lock(mutex_);
+            stopping_ = true;
 
+            // 取消所有正在执行的任务
+            for (auto& token : activeTokens_)
             {
-                std::lock_guard<std::mutex> lock(mutex_);
-                stopping_ = true;
+                token.cancel();
+            }
 
-                // 取消所有在正在执行的任务
-                for (auto& token : activeTokens_)
-                {
-                    token.cancel();
-                }
+            // FORCE 模式：把 pending 队列里的任务全部取出
+            // 只排空一次；GRACEFUL 之后再调 FORCE 仍然可以升级
+            if (mode == ShutdownMode::FORCE && !forceDrained_)
+            {
+                forceDrained_ = true;
 
-                // FORCE 模式：把 pending 队列里的任务全部取出
-                // 标记失败，收集它们的 completion 回调
-                if (mode == ShutdownMode::FORCE)
+                auto drained = scheduler_.drainAllPending();
+                for (auto& task : drained)
                 {
-                    auto drained = scheduler_.drainAllPending();
-                    for (auto& task : drained)
+                    if (!task) continue;
+
+                    // PENDING 不能直接 fail，先转 SCHEDULED
+                    task->schedule();
+                    task->fail("SERVER_SHUTTING_DOWN");
+
+                    auto it = completions_.find(task->id());
+                    if (it != completions_.end())
                     {
-                        if (!task) continue;
-
-                        // PENDING 不能直接 fail，先转 SCHEDULED
-                        task->schedule();
-                        task->fail("SERVER_SHUTTING_DOWN");
-
-                        auto it = completions_.find(task->id());
-                        if (it != completions_.end())
-                        {
-                            forcedFailures.emplace_back(task, std::move(it->second));
-                            completions_.erase(it);
-                        }
+                        forcedFailures.emplace_back(task, std::move(it->second));
+                        completions_.erase(it);
                     }
                 }
             }
+        }
 
-            // 锁外调用回调，避免 completion 内部拿 mutex_ 造成死锁
-            for (auto& [task, cb] : forcedFailures)
+        // 锁外调用回调，避免 completion 内部拿 mutex_ 造成死锁
+        for (auto& [task, cb] : forcedFailures)
+        {
+            if (cb)
             {
-                if (cb)
-                {
-                    try { cb(task, WorkerExecutionResult::FAILED); }
-                    catch (...) {}
-                }
+                try { cb(task, WorkerExecutionResult::FAILED); }
+                catch (...) {}
             }
+        }
 
-            cv_.notify_all();
+        cv_.notify_all();
 
-            for (auto& worker : workers_)
-            {
-                if (worker.joinable()) worker.join();
-            }
-        });
+        // 在 worker 线程里调 stop()（例如 completion 回调里）不能 join 自己。
+        // 这里只负责发信号；workerLoop 会在队列排空后自行退出，join 交给析构函数。
+        if (isWorkerThread())
+        {
+            return;
+        }
+
+        // join 只做一次：多个线程同时 stop() 时，后来的直接返回
+        std::lock_guard<std::mutex> joinLock(joinMutex_);
+        if (joined_) return;
+
+        for (auto& worker : workers_)
+        {
+            if (worker.joinable()) worker.join();
+        }
+        joined_ = true;
     }
 
     void RuntimeEngine::cancelByClient(Scheduler::ClientId clientId)

@@ -2,6 +2,9 @@
 build/
 cmake-build-*/
 build-*/
+build-tsan/
+/AgentRuntimeGateway
+/AgentRuntimeBackend
 /EchoNetGateway
 .env
 .env.*

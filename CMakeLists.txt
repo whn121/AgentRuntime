@@ -5,6 +5,19 @@ project(AgentRuntime LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# ───── Sanitizer 开关 ─────
+# ASan/UBSan 查内存越界和 UB，查不到数据竞争。这个项目的卖点是并发与关闭路径，
+# 所以并发相关改动必须再跑一遍 TSan：
+#   cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DENABLE_TSAN=ON
+#   cmake --build build-tsan -j && ctest --test-dir build-tsan --output-on-failure
+# 注意：TSan 不能和 ASan 同时开。
+option(ENABLE_TSAN "Build with ThreadSanitizer (data-race detection)" OFF)
+if(ENABLE_TSAN)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread -fno-omit-frame-pointer -g")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
+    message(STATUS "ThreadSanitizer enabled")
+endif()
+
 # ═══════ 核心库：Reactor 网络框架 + 二进制协议 + 网关服务发现 ═══════
 set(SRC_CORE
     src/Net/Socket.cpp
@@ -138,3 +151,31 @@ add_executable(test_cancel_by_client_e2e tests/test_cancel_by_client_e2e.cpp)
 target_link_libraries(test_cancel_by_client_e2e PRIVATE agentruntime_core)
 target_compile_options(test_cancel_by_client_e2e PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME cancel_by_client_e2e COMMAND test_cancel_by_client_e2e)
+
+# stop() 的幂等性与重入（旧实现用 call_once，FORCE 无法升级、worker 线程调用会自 join）
+add_executable(test_stop_escalation tests/test_stop_escalation.cpp)
+target_link_libraries(test_stop_escalation PRIVATE agentruntime_core)
+target_compile_options(test_stop_escalation PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME stop_escalation COMMAND test_stop_escalation)
+
+# ───── 测试断言必须存活 ─────
+# 这些测试大量使用 assert()。Release 构建下 CMake 会加 -DNDEBUG，断言被整体编译掉，
+# 测试变成"永远通过"。这里统一给测试目标去掉 NDEBUG。
+foreach(test_target
+    test_runtime_engine
+    test_scheduler
+    test_scheduler_concurrent
+    test_task_concurrent
+    test_task_model
+    test_worker
+    test_worker_concurrent
+    test_close_drain
+    test_scheduler_fairness
+    test_runtime_cancel
+    test_read_exception
+    test_force_shutdown
+    test_cancel_by_client
+    test_cancel_by_client_e2e
+    test_stop_escalation)
+    target_compile_options(${test_target} PRIVATE -UNDEBUG)
+endforeach()

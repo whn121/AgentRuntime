@@ -53,6 +53,10 @@ namespace runtime
     private:
         void workerLoop();
 
+        // stop() 是否由本引擎的 worker 线程调用。
+        // 是的话不能 join 自己，只能发完取消信号后返回，由析构函数负责 join。
+        bool isWorkerThread() const;
+
         Scheduler scheduler_;
         Worker::Executor executor_;
         const std::size_t maxPendingTasks_;
@@ -65,7 +69,12 @@ namespace runtime
         std::atomic<TaskId> nextTaskId_{1};
         std::size_t activeCount_{0};
         bool stopping_{false};
-        std::once_flag stopOnce_;
+
+        // FORCE 的排空只做一次；GRACEFUL 之后再调 FORCE 仍可以升级
+        bool forceDrained_{false};
+        // worker 是否已经 join 过；stop() 可重入，join 只做一次
+        bool joined_{false};
+        std::mutex joinMutex_;
 
         // 当前正在执行的任务的令牌。由 mutex_ 保护
         // worker 取出任务后加入, 执行完成后移除
