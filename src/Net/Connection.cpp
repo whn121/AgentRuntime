@@ -35,16 +35,16 @@ void Connection::read()
         return;
     }
 
-    static constexpr size_t EXTRA_BUF_SIZE = 65536;  //用于定义**编译期可确定值、带静态属性的常量**
-    char extrabuf[EXTRA_BUF_SIZE] = {};  //64kb
+    static constexpr size_t EXTRA_BUF_SIZE = 65536;
+    char extrabuf[EXTRA_BUF_SIZE] = {};
 
-    // 读一次就返回去解析（读到 n>0 立即 break）。
-    // 不做"循环读到 EAGAIN"：LT 会在还有数据时再次通知，先把这一批解析掉，
-    // 避免恶意长度字段在解析前就把输入缓冲撑大。只有 EINTR 才重试。
+    bool protocol_error = false;
+
+    // 循环读到 EAGAIN：一次事件把内核缓冲区取干净，减少 epoll 唤醒次数。
+    // 但每读一段就立刻解析，所以恶意 body_len 不会在解析前把输入缓冲撑大。
     while (true)
     {
         // 保证 Buffer 至少有一些可写空间
-        // 如果 writable == 0，先扩容
         size_t writable = inBuffer_.writableBytes();
         if (writable == 0) {
             inBuffer_.enableWrite(EXTRA_BUF_SIZE);
@@ -65,47 +65,60 @@ void Connection::read()
 
             if (bytes <= writable)
             {
-                // 数据全在 Buffer 里
                 inBuffer_.moveWritePtr(bytes);
             }
             else
             {
-                // Buffer 填满，剩余在 extrabuf
                 inBuffer_.moveWritePtr(writable);
                 inBuffer_.bufferAppend(extrabuf, bytes - writable);
             }
 
             updateActiveTime();
-
             Metrics::bytes_read += bytes;
-            // Level-triggered epoll will report remaining bytes. Parse each chunk before reading more,
-            // so an invalid length cannot grow the input buffer until EAGAIN.
-            break;
+
+            // 每读一段先解析：非法长度在这里就被拦下，缓冲不会被撑大
+            if (!drainFrames())
+            {
+                protocol_error = true;
+                break;
+            }
+            continue;   // 还有数据就继续读，直到 EAGAIN
         }
-        else if (n == 0)
+
+        if (n == 0)
         {
-            // 对端发送方向已关闭，不能立即关闭整个连接。
-            // 前面 readv() 已经读取的数据仍然需要经过协议解析。
+            // 对端关闭写方向：不能立即关连接，缓冲里可能还有完整请求要处理
             peerReadClosed_ = true;
 
             // 停止读事件关注, 避免半关闭后反复触发读事件
             channel_->disableReading();
             loop_->updateChannelEvent(channel_.get(), channel_->getEvents());
-
-            // 退出读取循环, 继续执行下方解析循环
             break;
         }
-        else
-        {
-            // n < 0,根据errno判断
-            if (errno == EINTR) continue; //信号中断,立即重试
-            if (errno == EAGAIN || errno == EWOULDBLOCK) break; //内核缓冲区空了, 等待下一次epoll事件
-            // 其他错误，关闭连接
-            handleClose();
-            return;
-        }
+
+        // n < 0
+        if (errno == EINTR) continue;                                  // 信号中断，重试
+        if (errno == EAGAIN || errno == EWOULDBLOCK) break;            // 内核缓冲区空了
+
+        handleClose();
+        return;
     }
-    // 循环解析所有可解析的完整请求
+
+    if (!protocol_error)
+    {
+        // 覆盖两种情况：本次一个字节都没读到、但缓冲里还留着上次的半包；
+        // 以及读到 EOF 后，把残留的完整帧处理完
+        (void)drainFrames();
+    }
+
+    // EOF 后检查业务任务与输出是否全部排空。
+    maybeFinishAfterPeerEof();
+}
+
+// 解析缓冲里所有完整帧并投递业务任务。
+// 返回 false 表示连接已进入关闭流程（协议错误），调用方应停止继续读。
+bool Connection::drainFrames()
+{
     while (true)
     {
         ParseResult res = protocol_->parse(inBuffer_);
@@ -115,18 +128,18 @@ void Connection::read()
             // 连接已经进入关闭流程，不再接受新的业务请求
             if (!isConnected())
             {
-                break;
+                return false;
             }
 
             // 解析成功，封装任务投递给业务线程池
             Task task;
-            task.conn_ = shared_from_this();          // 延长 Connection 生命周期
             task.message_ = protocol_->getMessage();  // 取出解析好的请求消息
 
-            //  解决work知道协议,解耦不彻底的问题 关键,把业务处理封装
             auto msg = task.message_;
-            auto handler = businessHandler_; //复制一份
+            auto handler = businessHandler_;          // 复制一份，避免成员被并发改
 
+            // 用 weak_ptr 捕获：任务排队期间连接可以正常释放，
+            // 执行时提升失败就跳过，不会把连接寿命拖到任务执行完
             std::weak_ptr<Connection> weakself = shared_from_this();
 
             task.run_ = [weakself, msg, handler]()
@@ -139,7 +152,6 @@ void Connection::read()
                 {
                     handler (self, msg);
                 }
-
             };
 
             task.onComplete_ = [weakself]()
@@ -152,8 +164,10 @@ void Connection::read()
 
             enqueueTask(std::move(task));
             protocol_->reset();  // 重置协议状态，准备解析下一个请求
+            continue;
         }
-        else if (res == ParseResult::ERROR)
+
+        if (res == ParseResult::ERROR)
         {
             // 协议错误：尝试获取协议层预置的错误响应
             auto errResp = protocol_->getErrorResponse();
@@ -167,28 +181,23 @@ void Connection::read()
                 // 协议层没有提供错误响应，直接关闭连接
                 handleClose();
             }
-            break;
+            return false;
         }
-        else
+
+        // NEED_MORE: 普通情况下保留半包, 等待后续数据
+        // 但如果对端已经EOF, 就不可能再收到剩余字节
+        if (peerReadClosed_ && inBuffer_.getreadable() > 0)
         {
-            //NEED_MORE: 普通情况下保留半包, 等待后续数据
-            // 但如果对端已经EOF, 就不可能再收到剩余字节
-            if (peerReadClosed_ && inBuffer_.getreadable() > 0)
-            {
-                LOG_WARN("Connection fd=" + std::to_string(afd_) + "peer EOF with incomplete frame; discarding"
-                + std::to_string(inBuffer_.getreadable()) + " bytes");
+            LOG_WARN("Connection fd=" + std::to_string(afd_) + " peer EOF with incomplete frame; discarding "
+                     + std::to_string(inBuffer_.getreadable()) + " bytes");
 
-                // 丢弃 EOF 时仍不完整的尾帧。
-                // 前面已经成功解析的完整请求不受影响。
-                inBuffer_.moveReadPtr(inBuffer_.getreadable());
-            }
-
-            break;
+            // 丢弃 EOF 时仍不完整的尾帧。
+            // 前面已经成功解析的完整请求不受影响。
+            inBuffer_.moveReadPtr(inBuffer_.getreadable());
         }
-    }
 
-    // EOF 后检查业务任务与输出是否全部排空。
-    maybeFinishAfterPeerEof();
+        return true;
+    }
 }
 
 // ---------- 写事件处理 ----------

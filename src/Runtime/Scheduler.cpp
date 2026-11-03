@@ -1,5 +1,6 @@
 #include "Runtime/Scheduler.h"
 #include "Metrics/Metrics.h"
+#include "Logger/AsyncLogger.h"
 
 #include <utility>
 #include <vector>
@@ -98,7 +99,15 @@ namespace runtime
             if (taskIt == tasks_.end()) continue;
 
             // 只有 PENDING 任务能进入 SCHEDULED。
-            if (!taskIt->second->schedule()) continue;
+            // 正常情况下从队列取出来的一定是 PENDING；万一不是（并发 drain / 状态被改），
+            // 这里必须把它从 tasks_ 里摘掉，否则它会变成一个"已出队、永远不会被调度、
+            // 也永远进不了终态"的孤儿任务，一直占着内存。
+            if (!taskIt->second->schedule())
+            {
+                LOG_WARN("Scheduler: dropping non-PENDING task id=" + std::to_string(id));
+                tasks_.erase(taskIt);
+                continue;
+            }
 
             return taskIt->second;
 

@@ -115,6 +115,10 @@ private:
     
     void handleClose();      // 统一关闭入口 ,进入关闭状态,禁止新的io操作,移除epoll监听
 
+    // 解析缓冲里所有完整帧并投递业务任务。
+    // 返回 false 表示连接已进入关闭流程（协议错误），调用方应停止继续读。
+    bool drainFrames();
+
     void notifyCancelOnce();  // 所有关闭路径统一触发一次 cancelHook_
 
     void handleTaskSubmitFailure(TaskQueue::PushResult result, bool preserveRunningTask = false); // 处理工作线程池拒绝任务：停止调度、取消等待任务并请求关闭
