@@ -13,8 +13,8 @@ namespace
 
     void initializeCurl()
     {
-        static std::once_flag flag;
-        static CURLcode result = CURLE_OK;
+        static std::once_flag flag;  // 给call_once 提供的标记, 保证只执行一次,必须静态
+        static CURLcode result = CURLE_OK; // curl 实现业务层功能的一般基于tcp的传输  CURLcode是错误码类型, 阻塞的
 
         std::call_once(flag, []
         {

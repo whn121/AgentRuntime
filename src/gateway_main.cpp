@@ -24,7 +24,8 @@
 
 
 // 接管所有现存后台线程，并为每条线程提供可中断的停止通路。
-class BackgroundThread {
+class BackgroundThread 
+{
 public:
     template<class F>
     BackgroundThread(std::atomic<bool>& stop, std::mutex& mutex, std::condition_variable& cv, F&& fn)

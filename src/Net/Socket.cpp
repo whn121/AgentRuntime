@@ -44,28 +44,10 @@ bool Socket::m_listen(int backlog)
     return listen(fd_, backlog) >= 0;
 }
 
-int Socket::m_accept() 
-{
-    sockaddr_in client_addr{};
-    socklen_t len = sizeof (client_addr);
-    int afd = accept4 (fd_, (sockaddr*)&client_addr, &len, SOCK_NONBLOCK | SOCK_CLOEXEC);
-    if (afd == -1)
-    {
-        LOG_ERROR("accept failed: " + std::string(strerror(errno)));
-    }
-    return afd;
-}
-
 void Socket::setReuseAddr(bool on) 
 {
     int opt = on ? 1 : 0;
     setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-}
-
-void Socket::setNonBlocking() //函数保留防止以后不兼容时使用,我这里没调用
-{
-    int flags = fcntl(fd_, F_GETFL, 0);
-    fcntl(fd_, F_SETFL, flags | O_NONBLOCK);
 }
 
 bool Socket::parseAddr(const std::string& host, uint16_t port)

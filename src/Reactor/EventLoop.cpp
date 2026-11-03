@@ -139,7 +139,8 @@ void EventLoop::loop()
                     std::lock_guard<std::mutex> lock(mtx_);
                     tasks.swap(task_queue_);
                 }
-                for (auto& task : tasks) {
+                for (auto& task : tasks) 
+                {
                     try { task(); }
                     catch (const std::exception& e) { LOG_ERROR("EventLoop callback failed: " + std::string(e.what())); }
                     catch (...) { LOG_ERROR("EventLoop callback failed"); }

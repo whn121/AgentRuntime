@@ -11,7 +11,8 @@
 enum class IP { ipv4, ipv6 };
 enum class Proto { tcp, udp };
 
-// 简单socket封装（目前仅支持TCP）
+// fd 的 RAII 封装：构造置 -1，析构自动 close，避免 fd 泄漏。
+// 目前只用到 TCP；UDP 分支保留在 m_init 里但未被调用。
 class Socket 
 {
 public:
@@ -20,19 +21,20 @@ public:
     Socket(const Socket&) = delete;
     Socket& operator=(const Socket&) = delete;
 
-    bool m_init(IP ip, Proto proto);                    // 创建socket
+    bool m_init(IP ip, Proto proto);                    // 创建socket（非阻塞 + CLOEXEC）
     bool m_bind(uint16_t port = 8080, uint32_t addr = INADDR_ANY); // 绑定
     bool m_listen(int backlog = 128);                   // 监听
-    int m_accept();                                     // 接受连接
-    void setReuseAddr(bool on);                         // 设置地址重用
-    void setNonBlocking();                              // 设置非阻塞
+
+    // 注意：accept 不在这个类里做。Acceptor 直接用 accept4，
+    // 以便在创建 fd 的同时原子地设置 NONBLOCK / CLOEXEC。
+    void setReuseAddr(bool on);                         // 设置地址重用（必须在 bind 前调用）
     int getFd() const { return fd_; };                  // 获取文件描述符
     void close(); // 主动关闭 socket；重复调用安全
 
-    // 提供主动链接,网关要服务器主动连接诶
+    // 主动连接：网关需要向 Backend 建立出站连接
     bool m_connect(const std::string& host, uint16_t port);   // 主动连接
 
-    // 交出fd所有权,要不gatewaymin里析构旧弹错误
+    // 交出 fd 所有权：release 之后本对象不再负责 close，避免与接手方重复关闭
     int release(); 
 
 private:

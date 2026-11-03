@@ -157,7 +157,7 @@ int main(int argc, char* argv[]) try
     );
 
     Server server;
-        server.setcreator([&runtimeEngine](int fd, EventLoop* loop) 
+    server.setcreator([&runtimeEngine](int fd, EventLoop* loop) 
     {
         auto conn = std::make_shared<Connection>(fd, std::make_unique<Channel>(fd), loop, std::make_unique<MyProtocol>());
 

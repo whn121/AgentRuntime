@@ -35,7 +35,7 @@ bool Server::start()
     LOG_INFO("监听成功，端口: " + std::to_string(port));
 
     // 创建Acceptor，设置新连接回调
-    acceptor_ = std::make_unique<Acceptor>(listen_socket_.getFd(), &mainloop_, &iopool_);
+    acceptor_ = std::make_unique<Acceptor>(listen_socket_.getFd(), &mainloop_);
     acceptor_->setCallBack([this](int afd) { iopool_.submit(afd); });
     acceptor_->listen();
 

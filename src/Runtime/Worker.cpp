@@ -7,7 +7,7 @@
 
 namespace runtime
 {
-    Worker::Worker(Executor exexutor) : executor_ (std::move (exexutor))
+    Worker::Worker(Executor executor) : executor_ (std::move (executor))
     {
         // 没有执行器时无法执行任务
         // 尽早暴露配置错误,而不是等到任务到来才失败

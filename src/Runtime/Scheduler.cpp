@@ -9,7 +9,7 @@ namespace runtime
 {
     bool Scheduler::submit (TaskId id, ClientId clientId, std::string input)
     {
-        // 先创建任务, 非法id会由runtimetask构造函数检测冰雹出异常
+        // 先创建任务：非法 id 会被 RuntimeTask 构造函数拒绝并抛异常
         auto task = std::make_shared<RuntimeTask> (id, std::move (input));
 
         std::lock_guard<std::mutex> lock (mutex_);

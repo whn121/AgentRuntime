@@ -38,7 +38,9 @@ void Connection::read()
     static constexpr size_t EXTRA_BUF_SIZE = 65536;  //用于定义**编译期可确定值、带静态属性的常量**
     char extrabuf[EXTRA_BUF_SIZE] = {};  //64kb
 
-    // 循环读取，直到内核缓冲区没有数据（EAGAIN）或发生错误
+    // 读一次就返回去解析（读到 n>0 立即 break）。
+    // 不做"循环读到 EAGAIN"：LT 会在还有数据时再次通知，先把这一批解析掉，
+    // 避免恶意长度字段在解析前就把输入缓冲撑大。只有 EINTR 才重试。
     while (true)
     {
         // 保证 Buffer 至少有一些可写空间
