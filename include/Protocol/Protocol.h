@@ -23,8 +23,10 @@ public:
     // 从 buffer 中解析数据
     virtual ParseResult parse(Buffer& buffer) = 0;
 
-    // 将业务层的响应消息（any 包装）编码为网络发送的字节流
-    virtual std::string encode(const std::any& message) = 0;
+    // 将业务层的响应消息（any 包装）编码为网络发送的字节流。
+    // 必须是 const + 不依赖可变状态：编码会在业务线程里做（见 Connection::sendRaw），
+    // IO 线程只负责把字节搬走，不参与序列化。
+    virtual std::string encode(const std::any& message) const = 0;
 
     // 获取解析后的请求消息（any 包装，实际类型由协议决定）
     virtual std::any getMessage() = 0;

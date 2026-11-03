@@ -29,7 +29,12 @@ public:
 
     void read();                                          // 处理读事件
     void write();                                         // 处理写事件
-    void sendResponse(const std::any& response);          // 发送响应（完全解耦协议）
+    void sendResponse(const std::any& response);          // 发送响应（内部编码，兼容旧调用）
+
+    // 发送**已编码**的字节。线程安全，可在任意线程调用（业务线程/engine 线程）。
+    // 设计意图：把序列化留在业务线程，IO 线程只做字节搬运与 flush，
+    // 避免大响应包在 IO 线程上做 encode 阻塞 epoll。
+    void sendRaw(std::string data);
     Channel* getChannel();                                // 返回内部的 Channel 指针
     void setcloseCallback(std::function<void(int)> close);// 设置连接关闭回调
     void myClose();                                       // 主动关闭连接
@@ -114,6 +119,9 @@ private:
     std::atomic<size_t> pendingSendCallbacks_{0};
     
     void handleClose();      // 统一关闭入口 ,进入关闭状态,禁止新的io操作,移除epoll监听
+
+    // 把已编码的字节放进发送队列并 flush。必须在所属 EventLoop 线程调用。
+    void enqueueEncoded(std::string data);
 
     // 解析缓冲里所有完整帧并投递业务任务。
     // 返回 false 表示连接已进入关闭流程（协议错误），调用方应停止继续读。

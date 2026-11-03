@@ -31,7 +31,7 @@ class MyProtocol : public Protocol
 {
 public:
     ParseResult parse (Buffer& bufffer) override; //解析
-    std::string encode (const std::any& message) override; //序列化二进制
+    std::string encode (const std::any& message) const override; //序列化二进制（无状态，可在业务线程调用）
     std::any getMessage() override; //获得最终消息
     void reset() override; //重置状态
 

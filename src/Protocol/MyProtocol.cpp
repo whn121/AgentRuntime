@@ -100,7 +100,7 @@ std::string MyProtocol::encodeMessage(MyType type, uint32_t id, const std::strin
     return packet;
 }
 
-std::string MyProtocol::encode(const std::any &message)
+std::string MyProtocol::encode(const std::any &message) const
 {
     auto msg = std::any_cast<MyMessage> (message);
     return encodeMessage(msg.type_, msg.id_, msg.payload_);

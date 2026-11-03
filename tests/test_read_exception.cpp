@@ -23,7 +23,7 @@ public:
     {
         throw std::runtime_error("simulated parse failure");
     }
-    std::string encode(const std::any&) override { return {}; }
+    std::string encode(const std::any&) const override { return {}; }
     std::any getMessage() override { return {}; }
     void reset() override {}
     std::optional<std::any> getErrorResponse() override { return std::nullopt; }

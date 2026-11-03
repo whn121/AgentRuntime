@@ -253,82 +253,109 @@ void Connection::write()
     }
 }
 
-// 发送响应, 入队列
+// 发送业务响应（内部编码）。
+// 兼容旧调用点：编码放在**调用方线程**做（协议 encode 已是 const 且无状态），
+// 真正的入队/flush 仍然投递到 IO 线程。
 void Connection::sendResponse(const std::any& response)
 {
     // 关闭期间静默丢掉响应是预期行为。异步任务(RuntimeEngine)的完成回调
     // 可能在连接关了之后才到, 这时候丢掉比强发安全
     // 见 docs/shutdown-semantics.md
     if (!isConnected()) return;
-    // 回调已经提交, 但可能尚未被Eventloop执行
-    // 先计数, 避免EOF收尾误认为没有待发送工作
+
+    std::string data;
+    try
+    {
+        data = protocol_->encode(response);
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR("Response encoding failed: " + std::string(e.what()));
+        // 编码失败要回到 IO 线程关闭连接（handleClose 有线程归属要求）
+        std::weak_ptr<Connection> weakself = shared_from_this();
+        loop_->runInLoop([weakself]
+        {
+            if (auto self = weakself.lock()) self->handleClose();
+        });
+        return;
+    }
+
+    sendRaw(std::move(data));
+}
+
+// 发送已编码的字节：任意线程可调，入队/flush 投递到 IO 线程执行
+void Connection::sendRaw(std::string data)
+{
+    if (data.empty()) return;
+    if (!isConnected()) return;
+
+    // 回调已经提交, 但可能尚未被 EventLoop 执行；
+    // 先计数, 避免 EOF 收尾误认为没有待发送工作
     pendingSendCallbacks_.fetch_add(1, std::memory_order_relaxed);
 
-    // runInLoop 的参数构造(lambda 拷贝 response)和 task_queue_.emplace_back
-    // 都可能抛 bad_alloc。任何一步抛异常都要把计数还回去
-    // 否则maybeFinishAfterPeerEof 会永远被这个计数挡住
+    // runInLoop 的参数构造(lambda 移动 data)和 task_queue_.emplace_back
+    // 都可能抛 bad_alloc。任何一步抛异常都要把计数还回去，
+    // 否则 maybeFinishAfterPeerEof 会永远被这个计数挡住
     try
     {
         std::weak_ptr<Connection> weakself = shared_from_this();
 
-        if (!loop_->runInLoop( [weakself,response]
+        const bool accepted = loop_->runInLoop([weakself, data = std::move(data)]() mutable
         {
             auto self = weakself.lock();
-            if(!self) return;
+            if (!self) return;
 
-            // 进入回调后, 先结束等待执行计数
             self->pendingSendCallbacks_.fetch_sub(1, std::memory_order_acq_rel);
+            self->enqueueEncoded(std::move(data));
+        });
 
-            if(!self->isConnected()) return;
-
-            std::string data;
-            try { data = self->protocol_->encode(response); }
-            catch (const std::exception& e) 
-            {
-                LOG_ERROR("Response encoding failed: " + std::string(e.what()));
-                self->handleClose();
-                return;
-            }
-
-            bool queueFull = false;
-
-            {
-                std::lock_guard<std::mutex> lock (self->sendMutex_);
-
-                // 使用减法比较, 避免size相加时发生整数溢出
-                if (data.size() > MAX_SEND_QUEUE_BYTES ||  self->sendQueueBytes_ > MAX_SEND_QUEUE_BYTES - data.size())
-                {
-                    queueFull = true;
-                }
-                else 
-                {
-                    self->sendQueueBytes_ += data.size();
-                    self->sendQueue_.push (std::move(data));
-                }
-            }
-
-            if (queueFull)
-            {
-                Metrics::conn_closed_send_high_water.fetch_add(1, std::memory_order_relaxed);
-                LOG_WARN("Connection fd=" + std::to_string(self->afd_) + " sendQueue exceeds limit; closing connection");
-
-                self->handleClose();
-                return;
-            }
-
-            self->flushSendQueue();
-
-            // flush 后再次检查。
-            // 若已排空，可以完成 EOF 收尾；若仍有数据，检查会返回。
-            self->maybeFinishAfterPeerEof();
-
-        })) pendingSendCallbacks_.fetch_sub(1, std::memory_order_acq_rel);
+        if (!accepted)
+        {
+            // loop 已停止，回调不会执行，计数必须在这里还回去
+            pendingSendCallbacks_.fetch_sub(1, std::memory_order_acq_rel);
+        }
     }
-    catch(...)
+    catch (...)
     {
         pendingSendCallbacks_.fetch_sub(1, std::memory_order_acq_rel);
         throw;
     }
+}
+
+// 在 IO 线程里：把字节放进发送队列 → flush → 检查 EOF 收尾
+void Connection::enqueueEncoded(std::string data)
+{
+    if (!isConnected()) return;
+
+    bool queueFull = false;
+
+    {
+        std::lock_guard<std::mutex> lock (sendMutex_);
+
+        // 使用减法比较, 避免 size 相加时发生整数溢出
+        if (data.size() > MAX_SEND_QUEUE_BYTES || sendQueueBytes_ > MAX_SEND_QUEUE_BYTES - data.size())
+        {
+            queueFull = true;
+        }
+        else
+        {
+            sendQueueBytes_ += data.size();
+            sendQueue_.push(std::move(data));
+        }
+    }
+
+    if (queueFull)
+    {
+        Metrics::conn_closed_send_high_water.fetch_add(1, std::memory_order_relaxed);
+        LOG_WARN("Connection fd=" + std::to_string(afd_) + " sendQueue exceeds limit; closing connection");
+        handleClose();
+        return;
+    }
+
+    flushSendQueue();
+
+    // flush 后再次检查：若已排空，可以完成 EOF 收尾；若仍有数据，检查会返回
+    maybeFinishAfterPeerEof();
 }
 
 Channel* Connection::getChannel()

@@ -157,7 +157,7 @@ int main(int argc, char* argv[]) try
     );
 
     Server server;
-    server.setcreator([&runtimeEngine](int fd, EventLoop* loop) 
+        server.setcreator([&runtimeEngine](int fd, EventLoop* loop) 
     {
         auto conn = std::make_shared<Connection>(fd, std::make_unique<Channel>(fd), loop, std::make_unique<MyProtocol>());
 
@@ -185,21 +185,17 @@ int main(int argc, char* argv[]) try
             // 网关健康探测仍使用原有处理逻辑
             if (request.type_ == MyType::HEARTBEAT_REQ)
             {
-                auto response = request;
-                response.type_ = MyType::HEARTBEAT_RESP;
-                conn->sendResponse(response);
+                // 序列化在业务线程完成，IO 线程只负责搬字节（见 Connection::sendRaw）
+                conn->sendRaw(MyProtocol::encodeMessage(
+                    MyType::HEARTBEAT_RESP, request.id_, request.payload_));
                 return;
             }
 
             // 第一阶段只处理明确约定的Runtime业务请求
             if (request.type_ != MyType::RUNTIME_TASK_REQ)
             {
-                conn->sendResponse(MyMessage
-                {
-                    MyType::ERROR_RESP,
-                    request.id_,
-                    "UNSUPPORTED_MESSAGE_TYPE"
-                });
+                conn->sendRaw(MyProtocol::encodeMessage(
+                    MyType::ERROR_RESP, request.id_, "UNSUPPORTED_MESSAGE_TYPE"));
                 return;
             }
 
@@ -220,34 +216,24 @@ int main(int argc, char* argv[]) try
                 // 别在这里加"关闭时也回最后一帧"的逻辑, 会把停服时序搞乱
                 if (task && result == runtime::WorkerExecutionResult::SUCCEEDED)
                 {
-                    conn->sendResponse(MyMessage
-                    {
-                        MyType::RUNTIME_TASK_RESP,
-                        requestId,
-                        task->result()
-                    });
+                    // 这个 lambda 运行在 RuntimeEngine 的 worker 线程里：
+                    // encode 在这里做，IO 线程只收字节
+                    conn->sendRaw(MyProtocol::encodeMessage(
+                        MyType::RUNTIME_TASK_RESP, requestId, task->result()));
                 }
                 else
                 {
                     const std::string error = task && !task->error().empty() ? task->error() : "TASK_EXECUTION_FAILED";
 
-                    conn->sendResponse(MyMessage
-                    {
-                        MyType::RUNTIME_TASK_FAILED,
-                        requestId,
-                        error
-                    });
+                    conn->sendRaw(MyProtocol::encodeMessage(
+                        MyType::RUNTIME_TASK_FAILED, requestId, error));
                 }
             });
 
             if (!accepted)
             {
-                conn->sendResponse(MyMessage
-                {
-                    MyType::RUNTIME_TASK_FAILED,
-                    requestId,
-                    "TASK_SUBMISSION_FAILED"
-                });
+                conn->sendRaw(MyProtocol::encodeMessage(
+                    MyType::RUNTIME_TASK_FAILED, requestId, "TASK_SUBMISSION_FAILED"));
             }
         }
         catch (const std::bad_any_cast&)
