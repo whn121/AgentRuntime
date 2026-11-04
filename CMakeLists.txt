@@ -158,6 +158,12 @@ target_link_libraries(test_stop_escalation PRIVATE agentruntime_core)
 target_compile_options(test_stop_escalation PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME stop_escalation COMMAND test_stop_escalation)
 
+# 令牌桶限流器（纯逻辑，时间由测试注入，不依赖网络）
+add_executable(test_token_bucket tests/test_token_bucket.cpp)
+target_link_libraries(test_token_bucket PRIVATE agentruntime_core)
+target_compile_options(test_token_bucket PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME token_bucket COMMAND test_token_bucket)
+
 # ───── 测试断言必须存活 ─────
 # 这些测试大量使用 assert()。Release 构建下 CMake 会加 -DNDEBUG，断言被整体编译掉，
 # 测试变成"永远通过"。这里统一给测试目标去掉 NDEBUG。

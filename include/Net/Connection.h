@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Net/Buffer.h"
+#include "Common/TokenBucket.h"
 #include <unistd.h>
 #include <sys/socket.h>
 #include "Reactor/Channel.h"
@@ -35,6 +36,12 @@ public:
     // 设计意图：把序列化留在业务线程，IO 线程只做字节搬运与 flush，
     // 避免大响应包在 IO 线程上做 encode 阻塞 epoll。
     void sendRaw(std::string data);
+
+    // 每连接准入限流：从令牌桶里取一个令牌。
+    // 返回 false 表示本连接当前速率超限，调用方应回 RATE_LIMITED 而不是提交任务。
+    // 内部有锁，任意线程可调（实际调用方是业务线程）。
+    bool allowRequest();
+
     Channel* getChannel();                                // 返回内部的 Channel 指针
     void setcloseCallback(std::function<void(int)> close);// 设置连接关闭回调
     void myClose();                                       // 主动关闭连接
@@ -181,6 +188,14 @@ private:
 
     // 根据发送队列水位, 决定暂停还是恢复读事件
     void updateReadInterestForBackpressure();
+
+    // ── 每连接准入限流 ──
+    // 容量 200 个令牌（允许的突发量），每秒补充 100 个（稳态 QPS 上限）。
+    // 参数放在这里是为了让"限流多少"和"连接实现"在一起，方便改。
+    static constexpr double RATE_CAPACITY     = 200.0;
+    static constexpr double RATE_REFILL_PER_S = 100.0;
+
+    TokenBucket rateLimiter_;
 
     // 取消回调。close() 里调用一次，通知上层（RuntimeEngine）清理。
     std::function<void(int)> cancelHook_;

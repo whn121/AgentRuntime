@@ -7,6 +7,7 @@
 #include "Runtime/RuntimeEngine.h"
 #include "Logger/AsyncLogger.h"
 #include "Runtime/LlamaClient.h"
+#include "Metrics/Metrics.h"
 
 #include <any>
 #include <memory>
@@ -207,6 +208,16 @@ int main(int argc, char* argv[]) try
 
             // 以连接 fd 作为客户端标识，用于公平调度与按客户端配额。
             const int clientId = conn->getChannel()->getFd();
+
+            // 每连接令牌桶限流：放在业务层（work 线程）而不是 IO 线程，
+            // 这样限流逻辑不会占用 IO 线程；超限直接回错误码，不占引擎队列。
+            if (!conn->allowRequest())
+            {
+                Metrics::conn_rejected_rate_limited.fetch_add(1, std::memory_order_relaxed);
+                conn->sendRaw(MyProtocol::encodeMessage(
+                    MyType::RUNTIME_TASK_FAILED, requestId, "RATE_LIMITED"));
+                return;
+            }
 
             const bool accepted = runtimeEngine.submit(clientId, input, [conn, requestId]
                 (const std::shared_ptr<runtime::RuntimeTask>& task, runtime::WorkerExecutionResult result)

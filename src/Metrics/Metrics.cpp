@@ -17,5 +17,6 @@ std::atomic<uint64_t> Metrics::runtime_active{0};
 std::atomic<uint64_t> Metrics::conn_max_send_queue_bytes{0};
 std::atomic<uint64_t> Metrics::conn_backpressure_paused{0};
 std::atomic<uint64_t> Metrics::conn_backpressure_resumed{0};
+std::atomic<uint64_t> Metrics::conn_rejected_rate_limited{0};
 std::atomic<uint64_t> Metrics::connection_constructed{0};
 std::atomic<uint64_t> Metrics::connection_destructed{0};
