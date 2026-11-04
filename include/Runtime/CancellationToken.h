@@ -17,7 +17,7 @@ namespace runtime
 
         void cancel() const
         {
-            flag_->store(true, std::memory_order_relaxed);
+            flag_->store(true, std::memory_order_relaxed); // 仅保证原子本身不撕裂 跨变量随便重排 无同步
         }
 
         bool cancelled() const

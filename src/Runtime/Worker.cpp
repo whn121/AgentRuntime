@@ -40,10 +40,16 @@ namespace runtime
             // 只有RUNNING状态才能被标记为成功
             if (!task->succeed (std::move (result)))
             {
-                // 在当前单线程, 无外部状态修改的模型中
-                // 这里正常情况下不应该失败
-                // 未来并发, 必须重新设计状态同步
-                return WorkerExecutionResult::REJECTED;
+                // 正常情况下走不到这里：说明状态已被别的路径改过。
+                // 若此时仍是 RUNNING（非终态），任务就永远进不了终态，
+                // eraseTerminal 会拒绝删除 → 在 tasks_ 里永久残留。
+                // 这里兜底标失败，保证它一定能被回收；返回 FAILED 而不是
+                // REJECTED，因为任务确实执行过，只是结果无法写入。
+                if (!task->isTerminal())
+                {
+                    task->fail ("TASK_STATE_CONFLICT");
+                }
+                return WorkerExecutionResult::FAILED;
             }
 
             return WorkerExecutionResult::SUCCEEDED;

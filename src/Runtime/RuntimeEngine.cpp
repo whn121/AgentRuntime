@@ -1,5 +1,6 @@
 #include "Runtime/RuntimeEngine.h"
 #include "Metrics/Metrics.h"
+#include "Logger/AsyncLogger.h"
 
 #include <stdexcept>
 #include <utility>
@@ -167,6 +168,18 @@ namespace runtime
                 }
                 
                 result = WorkerExecutionResult::FAILED;
+            }
+
+            // 不变式守卫：经过 execute 之后，任务必须处于终态。
+            // 否则它既不会被再次调度，也永远不会被 eraseTerminal 回收，
+            // 会作为孤儿永久留在 Scheduler::tasks_ 里。
+            // 这里是所有执行路径的唯一收口，将来谁漏标终态都能被兜住并留下证据。
+            if (task && !task->isTerminal())
+            {
+                LOG_ERROR("RuntimeEngine: task " + std::to_string(task->id())
+                          + " left non-terminal after execute (state="
+                          + toString(task->state()) + "); forcing FAILED");
+                task->fail("TASK_DID_NOT_REACH_TERMINAL");
             }
 
             if (completion)
