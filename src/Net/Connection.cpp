@@ -9,9 +9,10 @@
 
 
 // 构造函数：转移 Channel 和 Protocol 的所有权，保存 EventLoop 指针
-Connection::Connection(int afd, std::unique_ptr<Channel> channel, EventLoop* loop, std::unique_ptr<Protocol> protocol)
+Connection::Connection(int afd, std::unique_ptr<Channel> channel, EventLoop* loop, std::unique_ptr<Protocol> protocol,
+                       double rate_capacity, double rate_refill_per_sec)
     : afd_(afd), clientId_(afd), loop_(loop), channel_(std::move(channel)), protocol_(std::move(protocol)),
-      rateLimiter_(RATE_CAPACITY, RATE_REFILL_PER_S)
+      rateLimiter_(rate_capacity, rate_refill_per_sec), rate_capacity_(rate_capacity)
 {
     Metrics::connection_constructed.fetch_add(1, std::memory_order_relaxed);
 }
@@ -19,6 +20,11 @@ Connection::Connection(int afd, std::unique_ptr<Channel> channel, EventLoop* loo
 // 每连接准入限流：业务线程在 submit 之前调用一次
 bool Connection::allowRequest()
 {
+    if (rate_capacity_ <= 0.0)
+    {
+        return true;   // 限流关闭（压测测容量）
+    }
+
     const double now = std::chrono::duration<double>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
     return rateLimiter_.tryAcquire(now);

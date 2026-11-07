@@ -1,0 +1,2 @@
+mode,conns,seconds,payload,total,ok,rate_limited,failed,other,qps,p50,p95,p99,max
+blast,20,10,1024,125243,125223,0,20,0,2047474.5,0.00,0.00,0.00,0.00

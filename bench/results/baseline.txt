@@ -1,0 +1,4 @@
+mode=closed_loop conns=200 seconds=60 payload=32
+total=150943 ok=150943 rate_limited=0 failed=0 other=0 qps=2512.0
+lat_ms p50=78.51 p95=92.90 p99=101.97 max=130.01
+sent_bytes=6339606 elapsed_s=60.09

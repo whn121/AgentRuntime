@@ -23,7 +23,9 @@ class Connection : public std::enable_shared_from_this<Connection>
 {
 public:
     Connection(int afd, std::unique_ptr<Channel> channel, EventLoop* loop,
-               std::unique_ptr<Protocol> protocol);
+               std::unique_ptr<Protocol> protocol,
+               double rate_capacity = RATE_CAPACITY,
+               double rate_refill_per_sec = RATE_REFILL_PER_S);
     ~Connection();
     Connection(const Connection&) = delete;
     Connection& operator=(const Connection&) = delete;
@@ -196,6 +198,9 @@ private:
     static constexpr double RATE_REFILL_PER_S = 100.0;
 
     TokenBucket rateLimiter_;
+
+    // <= 0 表示关闭限流（压测测容量时用）
+    double rate_capacity_ = RATE_CAPACITY;
 
     // 取消回调。close() 里调用一次，通知上层（RuntimeEngine）清理。
     std::function<void(int)> cancelHook_;

@@ -153,14 +153,22 @@ int main(int argc, char* argv[]) try
     {
         return llamaClient->complete(input, token);
     },
-    2,       // 固定工作线程数
+    static_cast<std::size_t>(config.engine_workers),   // --engine-workers，压测时用来定位瓶颈
     1024     // 最多排队等待的任务数
     );
-
     Server server;
-        server.setcreator([&runtimeEngine](int fd, EventLoop* loop) 
+        server.setcreator([&runtimeEngine, &config](int fd, EventLoop* loop) 
     {
-        auto conn = std::make_shared<Connection>(fd, std::make_unique<Channel>(fd), loop, std::make_unique<MyProtocol>());
+        // rate_limit_per_sec == 0 表示关闭限流：把容量也置 0，
+        // 让 Connection::allowRequest 直接放行（否则 burst 仍会拦下请求）。
+        const double rate_capacity = (config.rate_limit_per_sec == 0)
+            ? 0.0
+            : static_cast<double>(config.rate_limit_burst);
+
+        auto conn = std::make_shared<Connection>(fd, std::make_unique<Channel>(fd), loop,
+            std::make_unique<MyProtocol>(),
+            rate_capacity,
+            static_cast<double>(config.rate_limit_per_sec));
 
         // 连接关闭时通知 RuntimeEngine 取消该 clientId 的待调度任务。
         // clientId 就是 fd，和 businessHandler 里传给 submit 的值一致。

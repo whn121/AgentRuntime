@@ -66,3 +66,4 @@ data/
 Logger_txt/
 
 .env
+build_bench/
