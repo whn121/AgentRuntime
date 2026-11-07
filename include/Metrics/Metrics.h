@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <string>
 
 // 全局进程级指标, 都是 atomic, 谁都能写, 不加锁
 // 只记计数, 不记明细, 要明细去看日志
@@ -69,4 +70,8 @@ struct Metrics {
     // 每连接令牌桶限流拒绝的次数（RATE_LIMITED）
     // 和 conn_rejected_submit_failed 区分：那个是队列满，这个是客户端发太快被准入层拦下
     static std::atomic<uint64_t> conn_rejected_rate_limited;
+
+    // 一行式快照，用于退出时打印（暂无 /metrics 端点，先靠日志留证据）。
+    // 重点：connection_constructed == connection_destructed 说明没有连接泄漏。
+    static std::string Summary();
 };

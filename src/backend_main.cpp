@@ -280,6 +280,13 @@ int main(int argc, char* argv[]) try
         started = server.start();
     } // 停止并 join 续租线程，然后尽力注销；Server 和 RedisPool 仍然有效。
     server.stop();
+
+    // 退出时打印一行指标快照：压测脚本用它断言"连接构造数 == 析构数"（无泄漏）。
+    // 现在没有 /metrics 端点，日志是唯一的外部可观测出口。
+    // 同时写 stderr：异步日志是缓冲落盘的，压测脚本按 stdout/stderr 抓更可靠。
+    LOG_INFO("[Backend] metrics: " + Metrics::Summary());
+    std::cerr << "[Backend] metrics: " << Metrics::Summary() << '\n';
+
     if (!started) std::cerr << "[Backend] server start failed\n";
     return started ? 0 : 1;
 }

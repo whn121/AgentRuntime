@@ -109,7 +109,14 @@ stop_infra() {
     for pid in ${BE_PIDS:-} ${GW_PID:-} ${MODEL_PID:-}; do
         kill -TERM "$pid" 2>/dev/null
     done
-    sleep 0.5
+    # 优雅停服约 0.7s（见 REPORT 的 20 次统计），这里最多等 5s 再 KILL，
+    # 否则进程会在打印指标快照前被杀掉。
+    for pid in ${BE_PIDS:-} ${GW_PID:-} ${MODEL_PID:-}; do
+        for _ in $(seq 1 50); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.1
+        done
+    done
     for pid in ${BE_PIDS:-} ${GW_PID:-} ${MODEL_PID:-}; do
         kill -KILL "$pid" 2>/dev/null
     done
@@ -165,6 +172,40 @@ phase_ratelimit() {
         stop_infra
     done
     unset RATE_LIMIT
+}
+
+phase_leak() {
+    local conns="${1:-50}" secs="${2:-10}"
+    export ENGINE_WORKERS=8
+    unset RATE_LIMIT
+    start_infra || return 1
+    log "leak: 压测 ${conns} 连接 × ${secs}s，然后优雅停服读指标"
+    run_client leak "$conns" "$secs" 32 closed_loop
+    stop_infra            # SIGTERM 后后端会打印 metrics 快照
+    sleep 1
+
+    grep -h "metrics:" /tmp/bench_be_*.log > "$OUT_DIR/leak.txt" 2>/dev/null
+    cat "$OUT_DIR/leak.txt"
+
+    python3 - "$OUT_DIR/leak.txt" <<'PY'
+import re, sys
+ok = True
+rows = 0
+for line in open(sys.argv[1]):
+    m = re.search(r"connections_constructed=(\d+)\s+connections_destructed=(\d+)", line)
+    if not m:
+        continue
+    rows += 1
+    c, d = int(m.group(1)), int(m.group(2))
+    if c != d:
+        ok = False
+        print(f"FAIL: constructed={c} destructed={d} (diff {c-d})")
+if rows == 0:
+    print("SKIP: 日志里没找到 metrics 行")
+    sys.exit(3)
+print("PASS: 所有后端 connections_constructed == connections_destructed" if ok else "FAIL")
+sys.exit(0 if ok else 1)
+PY
 }
 
 phase_backpressure() {
@@ -228,6 +269,7 @@ case "${1:-all}" in
     build) build_binaries ;;
     sweep) build_binaries && phase_sweep "${2:-50}" "${3:-10}" ;;
     ratelimit) build_binaries && phase_ratelimit "${2:-50}" "${3:-10}" ;;
+    leak) build_binaries && phase_leak "${2:-50}" "${3:-10}" ;;
     baseline) build_binaries && phase_baseline "${2:-50}" "${3:-10}" ;;
     fault) build_binaries && phase_fault "${2:-50}" "${3:-10}" ;;
     backpressure) build_binaries && phase_backpressure ;;
