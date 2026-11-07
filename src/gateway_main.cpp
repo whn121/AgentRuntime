@@ -24,8 +24,7 @@
 
 
 // 接管所有现存后台线程，并为每条线程提供可中断的停止通路。
-class BackgroundThread 
-{
+class BackgroundThread {
 public:
     template<class F>
     BackgroundThread(std::atomic<bool>& stop, std::mutex& mutex, std::condition_variable& cv, F&& fn)
@@ -76,8 +75,14 @@ int main(int argc, char* argv[]) try
     {
         auto channel  = std::make_unique<Channel>(afd);
         auto protocol = std::make_unique<MyProtocol>();
+        // 网关按真实客户端连接限流：容量/速率来自 --rate-burst / --rate-limit
+        const auto& cfg = Config::instance();
+        const double capacity = (cfg.rate_limit_per_sec == 0)
+            ? 0.0
+            : static_cast<double>(cfg.rate_limit_burst);
         return std::make_shared<Connection>(
-            afd, std::move(channel), loop, std::move(protocol));
+            afd, std::move(channel), loop, std::move(protocol),
+            capacity, static_cast<double>(cfg.rate_limit_per_sec));
     });
 
     // 3.2业务处理器: 按值捕获state
@@ -161,6 +166,16 @@ int main(int argc, char* argv[]) try
             }
 
             // 是客户端,处理
+            // 0.准入限流：必须放在网关，按"真实客户端连接"限。
+            //   放在后端是错的——后端看到的是网关的复用连接，一条连接承载所有客户端，
+            //   会把整片流量误判成单客户端超速（压测实测：50 客户端 10s 只有 630 个成功）。
+            if (!conn->allowRequest())
+            {
+                state->metrics.rate_limited.fetch_add(1);
+                conn->sendResponse(MyMessage{MyType::ERROR_RESP, msg.id_, "RATE_LIMITED"});
+                return;
+            }
+
             // 1.选一个后端轮询
             auto backend = state->pick_backend();
             if (!backend)

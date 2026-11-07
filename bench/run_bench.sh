@@ -82,15 +82,19 @@ start_infra() {
 
     BE_PIDS=""
     for p in $BE_PORTS; do
+        # 后端不限流（内网连接是网关复用的，见 backend_main.cpp 注释）
         "$BUILD_DIR/AgentRuntimeBackend" --port="$p" \
             ${ENGINE_WORKERS:+--engine-workers="$ENGINE_WORKERS"} \
-            ${RATE_LIMIT:+--rate-limit="$RATE_LIMIT"} \
             > "/tmp/bench_be_$p.log" 2>&1 &
         BE_PIDS="$BE_PIDS $!"
     done
     sleep 2
 
-    "$BUILD_DIR/AgentRuntimeGateway" --port="$GW_PORT" > /tmp/bench_gw.log 2>&1 &
+    # 客户端准入限流在网关按真实客户端连接做
+    "$BUILD_DIR/AgentRuntimeGateway" --port="$GW_PORT" \
+        ${RATE_LIMIT:+--rate-limit="$RATE_LIMIT"} \
+        ${RATE_BURST:+--rate-burst="$RATE_BURST"} \
+        > /tmp/bench_gw.log 2>&1 &
     GW_PID=$!
     sleep 2
 
@@ -148,6 +152,19 @@ phase_fault() {
       log "已 kill 9001" ) &
     run_client fault "$conns" "$secs" 32 closed_loop
     stop_infra
+}
+
+phase_ratelimit() {
+    local conns="${1:-50}" secs="${2:-10}"
+    export ENGINE_WORKERS=8
+    for mode in on off; do
+        if [ "$mode" = "off" ]; then export RATE_LIMIT=0; else unset RATE_LIMIT; fi
+        start_infra || return 1
+        log "ratelimit=$mode conns=$conns seconds=$secs"
+        run_client "ratelimit_$mode" "$conns" "$secs" 32 closed_loop
+        stop_infra
+    done
+    unset RATE_LIMIT
 }
 
 phase_backpressure() {
@@ -210,6 +227,7 @@ PY
 case "${1:-all}" in
     build) build_binaries ;;
     sweep) build_binaries && phase_sweep "${2:-50}" "${3:-10}" ;;
+    ratelimit) build_binaries && phase_ratelimit "${2:-50}" "${3:-10}" ;;
     baseline) build_binaries && phase_baseline "${2:-50}" "${3:-10}" ;;
     fault) build_binaries && phase_fault "${2:-50}" "${3:-10}" ;;
     backpressure) build_binaries && phase_backpressure ;;

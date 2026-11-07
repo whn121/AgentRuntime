@@ -72,6 +72,7 @@ struct GatewayState
         std::atomic<uint64_t> pending_timeouts{0}; // pending表超时数
         std::atomic<uint64_t> unknown_responses{0}; // 未知相应 (没人等的相应)
         std::atomic<uint64_t> dropped_client_gone{0}; // 客户端已经断开 (响应到了但客户端断了)
+        std::atomic<uint64_t> rate_limited{0}; // 客户端被每连接令牌桶拦下的次数
     };
     Metrics metrics;
 

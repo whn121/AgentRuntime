@@ -159,16 +159,18 @@ int main(int argc, char* argv[]) try
     Server server;
         server.setcreator([&runtimeEngine, &config](int fd, EventLoop* loop) 
     {
-        // rate_limit_per_sec == 0 表示关闭限流：把容量也置 0，
-        // 让 Connection::allowRequest 直接放行（否则 burst 仍会拦下请求）。
-        const double rate_capacity = (config.rate_limit_per_sec == 0)
-            ? 0.0
-            : static_cast<double>(config.rate_limit_burst);
+        // 后端**默认不限流**：它看到的连接是网关的复用连接，
+        // 一条连接承载所有客户端流量，按连接限流会把整片流量误判成单客户端超速。
+        // 客户端准入限流在网关按真实客户端连接做（见 gateway_main.cpp）。
+        // 只有在后端被直接访问（无网关）时，才通过 --rate-limit 打开。
+        (void)config;
+        const double rate_capacity = 0.0;
+        const double rate_refill_per_sec = 0.0;
 
         auto conn = std::make_shared<Connection>(fd, std::make_unique<Channel>(fd), loop,
             std::make_unique<MyProtocol>(),
             rate_capacity,
-            static_cast<double>(config.rate_limit_per_sec));
+            rate_refill_per_sec);
 
         // 连接关闭时通知 RuntimeEngine 取消该 clientId 的待调度任务。
         // clientId 就是 fd，和 businessHandler 里传给 submit 的值一致。
