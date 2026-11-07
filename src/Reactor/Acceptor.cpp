@@ -3,6 +3,8 @@
 #include <unistd.h>      // close
 #include <netinet/tcp.h> //关闭Nagle算法(防止大量小包等待数据满了再发)
 #include <cstring>       // strerror
+#include <chrono>        // EMFILE 退避
+#include <thread>        // std::this_thread::sleep_for
 #include "Logger/AsyncLogger.h"
 
 
@@ -95,6 +97,12 @@ void Acceptor::handleAccept()
                 reserve_fd_ = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
 
                 LOG_ERROR("accept: fd exhausted (EMFILE/ENFILE), dropped one connection");
+
+                // 退避：预留 fd 已经避免了"100% CPU 死循环"，但只要 accept 队列里还有
+                // 连接，LT 仍会立刻再次触发。压测（80 连接打满、fd 上限 64）实测 CPU 约 52%。
+                // 每次丢弃后睡 1ms，把丢弃速率限到 ~1000/s：既能把积压逐步消费掉，
+                // 又不会把 CPU 打满。1ms 的阻塞发生在 fd 耗尽的异常期，可以接受。
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 continue;
             }
 

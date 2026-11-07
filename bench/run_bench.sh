@@ -208,6 +208,59 @@ sys.exit(0 if ok else 1)
 PY
 }
 
+phase_emfile() {
+    # 只起一个后端，并把 fd 上限压到 64：制造 EMFILE。
+    # 验证点：
+    #   1) 进程 CPU 不会飙到 100%（否则说明 listen fd 在 LT 下一直可读 → busy loop）
+    #   2) 释放一部分连接后，新连接仍能被接受（预留 fd 方案能把服务救回来）
+    redis-server --daemonize yes >/dev/null 2>&1
+    redis-cli FLUSHALL >/dev/null 2>&1
+
+    ( ulimit -n 64; exec "$BUILD_DIR/AgentRuntimeBackend" --port=9102 ) \
+        > /tmp/bench_emfile.log 2>&1 &
+    local be=$!
+    sleep 2
+
+    log "emfile: 打开 100 条连接把 fd 打满"
+    python3 - "$be" <<'PY'
+import socket, struct, subprocess, sys, time
+
+pid = sys.argv[1]
+socks = []
+for _ in range(80):
+    try:
+        s = socket.create_connection(("127.0.0.1", 9102), timeout=0.3)
+        socks.append(s)
+    except OSError:
+        break
+print(f"opened={len(socks)}", flush=True)
+
+time.sleep(1.5)
+cpu = subprocess.run(["ps", "-o", "%cpu=", "-p", pid], capture_output=True, text=True).stdout.strip()
+print(f"cpu_after_exhaust={cpu}", flush=True)
+
+# 全部释放，等服务端把 fd 还回来，再验证能否重新建连
+for s in socks:
+    s.close()
+time.sleep(1.5)
+
+ok = True
+for _ in range(5):
+    try:
+        socket.create_connection(("127.0.0.1", 9102), timeout=1).close()
+    except OSError as e:
+        ok = False
+        print(f"reconnect failed: {e}", flush=True)
+        break
+
+print("PASS: 打满后能自行恢复接受新连接" if ok else "FAIL: 释放后仍无法建连", flush=True)
+sys.exit(0 if ok else 1)
+PY
+    local rc=$?
+    kill -TERM "$be" 2>/dev/null; wait "$be" 2>/dev/null
+    return $rc
+}
+
 phase_backpressure() {
     start_infra || return 1
     log "backpressure: 只发不收，观察发送侧水位"
@@ -270,6 +323,7 @@ case "${1:-all}" in
     sweep) build_binaries && phase_sweep "${2:-50}" "${3:-10}" ;;
     ratelimit) build_binaries && phase_ratelimit "${2:-50}" "${3:-10}" ;;
     leak) build_binaries && phase_leak "${2:-50}" "${3:-10}" ;;
+    emfile) build_binaries && phase_emfile ;;
     baseline) build_binaries && phase_baseline "${2:-50}" "${3:-10}" ;;
     fault) build_binaries && phase_fault "${2:-50}" "${3:-10}" ;;
     backpressure) build_binaries && phase_backpressure ;;
