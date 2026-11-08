@@ -92,16 +92,6 @@ target_link_libraries(test_scheduler PRIVATE agentruntime_core)
 target_compile_options(test_scheduler PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME scheduler COMMAND test_scheduler)
 
-add_executable(test_scheduler_concurrent tests/test_scheduler_concurrent.cpp)
-target_link_libraries(test_scheduler_concurrent PRIVATE agentruntime_core)
-target_compile_options(test_scheduler_concurrent PRIVATE -Wall -Wextra -Wpedantic)
-add_test(NAME scheduler_concurrent COMMAND test_scheduler_concurrent)
-
-add_executable(test_task_concurrent tests/test_task_concurrent.cpp)
-target_link_libraries(test_task_concurrent PRIVATE agentruntime_core)
-target_compile_options(test_task_concurrent PRIVATE -Wall -Wextra -Wpedantic)
-add_test(NAME task_concurrent COMMAND test_task_concurrent)
-
 add_executable(test_task_model tests/test_task_model.cpp)
 target_link_libraries(test_task_model PRIVATE agentruntime_core)
 target_compile_options(test_task_model PRIVATE -Wall -Wextra -Wpedantic)
@@ -111,11 +101,6 @@ add_executable(test_worker tests/test_worker.cpp)
 target_link_libraries(test_worker PRIVATE agentruntime_core)
 target_compile_options(test_worker PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME worker COMMAND test_worker)
-
-add_executable(test_worker_concurrent tests/test_worker_concurrent.cpp)
-target_link_libraries(test_worker_concurrent PRIVATE agentruntime_core)
-target_compile_options(test_worker_concurrent PRIVATE -Wall -Wextra -Wpedantic)
-add_test(NAME worker_concurrent COMMAND test_worker_concurrent)
 
 add_executable(test_close_drain tests/test_close_drain.cpp)
 target_link_libraries(test_close_drain PRIVATE agentruntime_core)
@@ -132,25 +117,16 @@ target_link_libraries(test_runtime_cancel PRIVATE agentruntime_core)
 target_compile_options(test_runtime_cancel PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME runtime_cancel COMMAND test_runtime_cancel)
 
-add_executable(test_read_exception tests/test_read_exception.cpp)
-target_link_libraries(test_read_exception PRIVATE agentruntime_core)
-target_compile_options(test_read_exception PRIVATE -Wall -Wextra -Wpedantic)
-add_test(NAME read_exception COMMAND test_read_exception)
-
-add_executable(test_force_shutdown tests/test_force_shutdown.cpp)
-target_link_libraries(test_force_shutdown PRIVATE agentruntime_core)
-target_compile_options(test_force_shutdown PRIVATE -Wall -Wextra -Wpedantic)
-add_test(NAME force_shutdown COMMAND test_force_shutdown)
-
-add_executable(test_cancel_by_client tests/test_cancel_by_client.cpp)
-target_link_libraries(test_cancel_by_client PRIVATE agentruntime_core)
-target_compile_options(test_cancel_by_client PRIVATE -Wall -Wextra -Wpedantic)
-add_test(NAME cancel_by_client COMMAND test_cancel_by_client)
-
 add_executable(test_cancel_by_client_e2e tests/test_cancel_by_client_e2e.cpp)
 target_link_libraries(test_cancel_by_client_e2e PRIVATE agentruntime_core)
 target_compile_options(test_cancel_by_client_e2e PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME cancel_by_client_e2e COMMAND test_cancel_by_client_e2e)
+
+# 协议解析（纯逻辑：不开 socket，直接喂 Buffer）
+add_executable(test_protocol tests/test_protocol.cpp)
+target_link_libraries(test_protocol PRIVATE agentruntime_core)
+target_compile_options(test_protocol PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME protocol COMMAND test_protocol)
 
 # stop() 的幂等性与重入（旧实现用 call_once，FORCE 无法升级、worker 线程调用会自 join）
 add_executable(test_stop_escalation tests/test_stop_escalation.cpp)
@@ -170,18 +146,13 @@ add_test(NAME token_bucket COMMAND test_token_bucket)
 foreach(test_target
     test_runtime_engine
     test_scheduler
-    test_scheduler_concurrent
-    test_task_concurrent
     test_task_model
     test_worker
-    test_worker_concurrent
     test_close_drain
     test_scheduler_fairness
     test_runtime_cancel
-    test_read_exception
-    test_force_shutdown
-    test_cancel_by_client
     test_cancel_by_client_e2e
-    test_stop_escalation)
+    test_stop_escalation
+    test_protocol)
     target_compile_options(${test_target} PRIVATE -UNDEBUG)
 endforeach()

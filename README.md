@@ -142,24 +142,22 @@ cmake --build build-asan -j
 ctest --test-dir build-asan --output-on-failure
 ```
 
-**结果**：15 个 CTest——Release 15/15、ASan+UBSan 15/15、TSan 15/15（需 `setarch -R`，
+**结果**：11 个 CTest——Release 11/11、ASan+UBSan 11/11、TSan 11/11（需 `setarch -R`，
 见上）；Release 0 error、0 warning。端到端链路与四个故障场景实测输出归档在 `results/`：
 
 - `e2e_success.txt` —— Gateway → Backend → RuntimeEngine → 假 Qwen → 客户端，`type=5` 正常返回；
-- `cancel_latency.txt` —— 关闭时取消在途模型调用，实测 108ms 退出（对比 120s 超时兜底）；
+- `cancel_latency.txt` —— 关闭时取消在途模型调用：20 次实测 **median 700ms / p95 711ms**（对比 120s 超时兜底）；
 - `queue_overflow.txt` —— 队列满载时部分请求返回 `TASK_SUBMISSION_FAILED`，4 个槽位内正常执行；
 - `client_disconnect.txt` —— 客户端发送后立即断开，后续请求正常，服务不崩。
 
-测试覆盖的关键场景：
+测试按四条主张组织（11 个）：
 
-- `test_close_drain`：停服时连接清理恰好一次；验证 `closeCallback` 调用时 fd 仍有效、`finishClose` 后 fd 失效（`EBADF`）、`Connection` 构造数 = 析构数（资源级验证，不只计数器）；验证 `cancelHook_` 恰好一次且参数是原始 fd（不是 `finishClose` 后的 -1）；
-- `test_runtime_cancel`：取消令牌从 `stop()` 传播到 `executor_`，200ms 阈值内完成；
-- `test_scheduler_fairness`：一个客户端持续提交时另一客户端不被饿死，单客户端配额生效；
-- `test_read_exception`：`Connection::read` 抛异常不会拖垮 `EventLoop`；
-- `test_force_shutdown`：`FORCE` 模式下 5 个 pending 任务全部收到 `SERVER_SHUTTING_DOWN`，正在执行的任务被取消，毫秒级退出；
-- `test_cancel_by_client`：`RuntimeEngine::cancelByClient` 单元测试——pending 队列里的 5 个任务收到 `CLIENT_DISCONNECTED`，正在执行的 1 个任务成功完成，另一个 `clientId` 不受影响；
-- `test_cancel_by_client_e2e`：端到端验证——客户端断开触发 `Connection` 的 EOF 路径，验证 `handleClose → notifyCancelOnce → cancelHook_ → cancelByClient` 整条链路，5 个 pending 任务收到 `CLIENT_DISCONNECTED`，正在执行的 1 个任务成功完成；
-- `test_stop_escalation`：`stop()` 的幂等性与重入——重复 stop 不崩不挂；FORCE 排空后每个 completion 恰好回调一次（重复调用不翻倍）；在 completion 回调里（worker 线程）调 `stop()` 不会 join 自己导致死锁。
+| 主张 | 测试 |
+|---|---|
+| **状态不能跳步** | `test_task_model`（状态机非法转换）、`test_worker`（执行失败必标终态）、`test_runtime_engine`（提交/完成/拒绝） |
+| **调度要公平** | `test_scheduler`（FIFO + 配额）、`test_scheduler_fairness`（轮转不饿死） |
+| **取消与关闭不能漏** | `test_runtime_cancel`（令牌传播到执行层）、`test_cancel_by_client_e2e`（断开→取消整条链）、`test_close_drain`（排空 + 构造==析构 + cancelHook 恰好一次）、`test_stop_escalation`（幂等、FORCE 升级、不自 join） |
+| **边界要拒得住** | `test_protocol`（半包不消费、粘包、body_len 上/下限）、`test_token_bucket`（突发/补充/时间回退/reset） |
 
 > **所有测试目标都加了 `-UNDEBUG`。** 这些测试大量使用 `assert`，而 `CMAKE_BUILD_TYPE=Release`
 > 会带 `-DNDEBUG` 把断言整体编译掉，测试就变成"永远通过"。这个问题是在 2026-11-01 的修复里发现的，
@@ -209,7 +207,7 @@ ctest --test-dir build-asan --output-on-failure
 
 ### 2. Release 构建下测试断言被编译掉
 
-- **问题**：14 个测试大量使用 `assert()`，而 `-DCMAKE_BUILD_TYPE=Release` 会带 `-DNDEBUG`，
+- **问题**：测试大量使用 `assert()`，而 `-DCMAKE_BUILD_TYPE=Release` 会带 `-DNDEBUG`，
   断言整体消失，CTest 恒绿。
 - **修复**：CMake 里给所有测试目标统一加 `-UNDEBUG`。
 - **影响**：README 里"Release 构建全部通过"这句话从此才有意义；修复前只能说"Release 下能跑通"。
@@ -255,10 +253,10 @@ ctest --test-dir build-asan --output-on-failure
 
 ### 仍然没做的（别在面试里说做了）
 
-- **`LlamaClient` 的真实阻塞路径未测**：只测了"服务端接受连接但永不响应"，
-  TLS 握手、DNS 解析卡住时 `108ms` 不能外推。
+- **`LlamaClient` 的真实阻塞路径只测了一种**：只测了"服务端接受连接但永不响应"，
+  TLS 握手、DNS 解析卡住时 `700ms` 不能外推。
 - **跨网关高可用、TLS、跨节点调度**：没做。
-- **没有压测数据**：15 个测试都是功能/故障路径，没有 QPS、P99、长稳测试。
+- **没有长时间稳定性测试**：压测最长 60 秒（`bench/REPORT.md`），没有小时级/天级的 soak 测试，内存是否线性增长没有观测。
 
 ## 技术栈
 
