@@ -47,6 +47,10 @@ struct Config
     std::string mysql_password;
     std::string mysql_db = "agent_runtime";
 
+    // 查询令牌的 HMAC 密钥。为空 = 不启用鉴权（向后兼容）。
+    // 启用后：提交返回 token，查询必须带 token，防止"知道 request_id 就能查别人结果"。
+    std::string query_secret;
+
     // 停服模式：graceful（drain + deadline，默认）| force（全丢）
     // shutdown_deadline_ms 是 graceful 模式下"等任务自然完成"的最长时间。
     std::string shutdown_mode = "graceful";

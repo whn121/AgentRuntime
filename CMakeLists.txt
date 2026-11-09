@@ -35,6 +35,7 @@ set(SRC_CORE
     src/DB/RedisPool.cpp
     src/DB/MySQLPool.cpp
     src/Runtime/TaskStore.cpp
+    src/Crypto/HmacSha256.cpp
     src/Logger/AsyncLogger.cpp
     src/Metrics/Metrics.cpp
     src/Gateway/ServiceRegistry.cpp
@@ -149,6 +150,12 @@ target_link_libraries(test_token_bucket PRIVATE agentruntime_core)
 target_compile_options(test_token_bucket PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME token_bucket COMMAND test_token_bucket)
 
+# 手写 HMAC-SHA256 与查询令牌（RFC 4231 向量验证）
+add_executable(test_hmac tests/test_hmac.cpp)
+target_link_libraries(test_hmac PRIVATE agentruntime_core)
+target_compile_options(test_hmac PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME hmac COMMAND test_hmac)
+
 # ───── 测试断言必须存活 ─────
 # 这些测试大量使用 assert()。Release 构建下 CMake 会加 -DNDEBUG，断言被整体编译掉，
 # 测试变成"永远通过"。这里统一给测试目标去掉 NDEBUG。
@@ -162,6 +169,7 @@ foreach(test_target
     test_runtime_cancel
     test_cancel_by_client_e2e
     test_stop_escalation
-    test_protocol)
+    test_protocol
+    test_hmac)
     target_compile_options(${test_target} PRIVATE -UNDEBUG)
 endforeach()

@@ -35,6 +35,7 @@ void Config::parseArgs(int argc, char* argv[])
         {"mysql-user", required_argument, 0, 'U'},
         {"mysql-password", required_argument, 0, 'W'},
         {"mysql-db", required_argument, 0, 'N'},
+        {"query-secret", required_argument, 0, 'K'},
         {"help",       no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
@@ -54,7 +55,7 @@ void Config::parseArgs(int argc, char* argv[])
     optind = 1;
     int opt;
     // 循环解析参数，直到返回 -1
-    while ((opt = getopt_long(argc, argv, "p:i:w:E:B:L:G:T:S:D:b:r:R:H:P:U:W:N:h", long_options, nullptr)) != -1)
+    while ((opt = getopt_long(argc, argv, "p:i:w:E:B:L:G:T:S:D:b:r:R:H:P:U:W:N:K:h", long_options, nullptr)) != -1)
     {
         switch (opt) 
         {
@@ -80,6 +81,7 @@ void Config::parseArgs(int argc, char* argv[])
             case 'U': mysql_user = optarg; break;
             case 'W': mysql_password = optarg; break;
             case 'N': mysql_db = optarg; break;
+            case 'K': query_secret = optarg; break;
             case 'h':
                 std::cout
                     << "Usage: AgentRuntime [options]\n"
@@ -100,7 +102,8 @@ void Config::parseArgs(int argc, char* argv[])
                     << "  --mysql-port=N    MySQL port (default 3306)\n"
                     << "  --mysql-user=U    MySQL user (default agent)\n"
                     << "  --mysql-password=P MySQL password (default 空)\n"
-                    << "  --mysql-db=DB     MySQL database (default agent_runtime)\n";
+                    << "  --mysql-db=DB     MySQL database (default agent_runtime)\n"
+                    << "  --query-secret=S  查询令牌 HMAC 密钥；空=不鉴权 (default 空)\n";
                 exit(0);
             default:
                 throw std::invalid_argument("unknown option or missing argument");

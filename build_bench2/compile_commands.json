@@ -91,6 +91,12 @@
 },
 {
   "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Crypto/HmacSha256.cpp.o -c /home/whn/AgentRuntime/src/Crypto/HmacSha256.cpp",
+  "file": "/home/whn/AgentRuntime/src/Crypto/HmacSha256.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/Crypto/HmacSha256.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
   "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Logger/AsyncLogger.cpp.o -c /home/whn/AgentRuntime/src/Logger/AsyncLogger.cpp",
   "file": "/home/whn/AgentRuntime/src/Logger/AsyncLogger.cpp",
   "output": "CMakeFiles/agentruntime_core.dir/src/Logger/AsyncLogger.cpp.o"
@@ -214,5 +220,11 @@
   "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/test_token_bucket.dir/tests/test_token_bucket.cpp.o -c /home/whn/AgentRuntime/tests/test_token_bucket.cpp",
   "file": "/home/whn/AgentRuntime/tests/test_token_bucket.cpp",
   "output": "CMakeFiles/test_token_bucket.dir/tests/test_token_bucket.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -UNDEBUG -o CMakeFiles/test_hmac.dir/tests/test_hmac.cpp.o -c /home/whn/AgentRuntime/tests/test_hmac.cpp",
+  "file": "/home/whn/AgentRuntime/tests/test_hmac.cpp",
+  "output": "CMakeFiles/test_hmac.dir/tests/test_hmac.cpp.o"
 }
 ]

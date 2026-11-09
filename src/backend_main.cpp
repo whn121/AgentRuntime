@@ -2,6 +2,7 @@
 #include "DB/RedisPool.h"
 #include "DB/MySQLPool.h"
 #include "Runtime/TaskStore.h"
+#include "Crypto/HmacSha256.h"
 #include "Net/Connection.h"
 #include "Protocol/MyProtocol.h"
 #include "Reactor/Channel.h"
@@ -225,7 +226,7 @@ int main(int argc, char* argv[]) try
         runtimeEngine.stop(mode, std::chrono::milliseconds(config.shutdown_deadline_ms));
     });
 
-    server.setBusinessHandler([&runtimeEngine, task_store](std::shared_ptr<Connection> conn, const std::any& message) 
+    server.setBusinessHandler([&runtimeEngine, task_store, &config](std::shared_ptr<Connection> conn, const std::any& message) 
     {
         try
         {
@@ -250,15 +251,30 @@ int main(int argc, char* argv[]) try
                     return;
                 }
 
+                // payload 形如 "<request_id>[ <token>]"
+                const auto space_pos = request.payload_.find(' ');
+                const std::string id_part = request.payload_.substr(0, space_pos);
+                const std::string token_part = (space_pos == std::string::npos)
+                    ? std::string() : request.payload_.substr(space_pos + 1);
+
                 uint32_t qid = 0;
-                try { qid = static_cast<uint32_t>(std::stoul(request.payload_)); }
+                try { qid = static_cast<uint32_t>(std::stoul(id_part)); }
                 catch (...) { qid = 0; }
 
-                store::TaskRecord rec;
                 std::string body = "NOT_FOUND";
-                if (qid != 0 && task_store->Query(qid, rec))
+                if (!config.query_secret.empty() &&
+                    !crypto::VerifyQueryToken(qid, token_part, config.query_secret))
                 {
-                    body = "OK " + std::to_string(static_cast<int>(rec.status)) + " " + rec.result;
+                    // 配置了密钥就必须带对令牌，否则不泄漏"这个 id 存不存在"
+                    body = "FORBIDDEN";
+                }
+                else
+                {
+                    store::TaskRecord rec;
+                    if (qid != 0 && task_store->Query(qid, rec))
+                    {
+                        body = "OK " + std::to_string(static_cast<int>(rec.status)) + " " + rec.result;
+                    }
                 }
 
                 conn->sendRaw(MyProtocol::encodeMessage(
@@ -283,12 +299,19 @@ int main(int argc, char* argv[]) try
             // 用逻辑 clientId（不是 fd）：fd 会被内核复用，不能当身份。
             const auto clientId = conn->clientId();
 
+            // 查询令牌：在业务线程（work 池）算，不占 IO 线程。
+            // 客户端拿它来证明"这个 request_id 是我的"——没有它，知道 id 就能查别人结果。
+            // 用 HMAC 而不是随机数：服务端不用存 token 表，验签时重算一次即可（无状态）。
+            const std::string query_token = config.query_secret.empty()
+                ? std::string()
+                : crypto::MakeQueryToken(requestId, config.query_secret);
+
             // ★ 这里刻意【不做】限流。
             // 后端看到的连接是网关的复用连接（一条连接承载所有客户端流量），
             // 按连接限流会把整片流量误判成"单客户端超速"——压测实测：50 客户端
             // 10 秒只有 630 个成功（= 3 条后端连接 × 210）。
             // 客户端准入限流只在网关做（见 gateway_main.cpp），维度才对。
-            const bool accepted = runtimeEngine.submit(clientId, input, [conn, requestId, clientId, task_store]
+            const bool accepted = runtimeEngine.submit(clientId, input, [conn, requestId, clientId, task_store, query_token]
                 (const std::shared_ptr<runtime::RuntimeTask>& task, runtime::WorkerExecutionResult result)
             {
                 // 关闭期间连接可能已经进了 Closing, sendResponse 会静默丢掉
@@ -298,8 +321,11 @@ int main(int argc, char* argv[]) try
                 {
                     // 这个 lambda 运行在 RuntimeEngine 的 worker 线程里：
                     // encode 在这里做，IO 线程只收字节
+                    std::string resp = task->result();
+                    if (!query_token.empty()) resp += "|token=" + query_token;
+
                     conn->sendRaw(MyProtocol::encodeMessage(
-                        MyType::RUNTIME_TASK_RESP, requestId, task->result()));
+                        MyType::RUNTIME_TASK_RESP, requestId, resp));
 
                     // 终态落库：这里只入队，真正的写由 TaskStore 的写线程做。
                     // 引擎线程不能被一次 DB 写拖住。
@@ -313,8 +339,11 @@ int main(int argc, char* argv[]) try
                 {
                     const std::string error = task && !task->error().empty() ? task->error() : "TASK_EXECUTION_FAILED";
 
+                    std::string resp = error;
+                    if (!query_token.empty()) resp += "|token=" + query_token;
+
                     conn->sendRaw(MyProtocol::encodeMessage(
-                        MyType::RUNTIME_TASK_FAILED, requestId, error));
+                        MyType::RUNTIME_TASK_FAILED, requestId, resp));
 
                     if (task_store)
                     {
@@ -325,6 +354,14 @@ int main(int argc, char* argv[]) try
                     }
                 }
             });
+
+            // 受理回执：任务还没跑就先回一帧，把查询令牌交给客户端。
+            // 否则客户端在任务完成前断线，就永远拿不到令牌、之后也查不到结果。
+            if (accepted && !query_token.empty())
+            {
+                conn->sendRaw(MyProtocol::encodeMessage(
+                    MyType::TASK_ACCEPTED, requestId, "ACCEPTED|token=" + query_token));
+            }
 
             if (!accepted)
             {

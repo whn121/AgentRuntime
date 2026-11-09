@@ -20,9 +20,14 @@ enum class MyType : uint16_t
     RUNTIME_TASK_FAILED = 0x06,   //runtime执行失败
 
     // 幂等查询：客户端断开重连后，按 request_id 查任务结果。
-    // payload = 十进制 request_id；RESP payload = "OK <status> <result>" / "NOT_FOUND"
+    // payload = 十进制 request_id [空格 token]；RESP payload = "OK <status> <result>" / "NOT_FOUND" / "FORBIDDEN"
     TASK_QUERY_REQ  = 0x07,
-    TASK_QUERY_RESP = 0x08
+    TASK_QUERY_RESP = 0x08,
+
+    // 提交受理回执：在任务真正开始执行前就返回，带上查询令牌。
+    // 为什么要它：客户端可能在任务完成前断开——如果没有回执，它就拿不到令牌，
+    // 之后无法查询自己的结果（这正是"断开重连可查"这个特性的前提）。
+    TASK_ACCEPTED = 0x09
 };
 
 struct MyMessage
