@@ -59,13 +59,14 @@ int main()
     }
 
     const auto begin = std::chrono::steady_clock::now();
-    engine.stop();
+    // GRACEFUL 现在是 drain + deadline：先等任务自然完成，超时才取消。
+    // 这里的 executor 只在收到取消时才会退出，所以必须给一个短 deadline 触发兜底路径。
+    engine.stop(runtime::RuntimeEngine::ShutdownMode::GRACEFUL, 100ms);
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - begin);
 
-    // 协作式取消应在 200ms 内生效。如果 stop() 等了 CURLOPT_TIMEOUT_MS
-    // 级别的时长(120s), 说明取消没有传播到 executor_。
-    assert(elapsed < 200ms);
+    // deadline 到期后取消必须立刻传播（而不是等 CURLOPT_TIMEOUT_MS 级别的 120s）。
+    assert(elapsed < 1000ms);
     assert(completed.load() == 1);
 
     return 0;

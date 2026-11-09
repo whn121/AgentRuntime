@@ -148,11 +148,88 @@ static void TestStopFromCompletionCallback()
     CHECK(true);
 }
 
+// 4) DRAIN：不取消任何任务，等它们自然完成（deadline 内 0 丢失）
+static void TestDrainWaitsForAll()
+{
+    std::atomic<int> succeeded{0};
+
+    auto slow_executor = [](const std::string& input, const runtime::CancellationToken&) -> std::string
+    {
+        std::this_thread::sleep_for(30ms);
+        return input;
+    };
+
+    runtime::RuntimeEngine engine(slow_executor, 1, 8);   // 只 1 个 worker，保证任务会排队
+
+    for (int i = 1; i <= 3; ++i)
+    {
+        CHECK(engine.submit(i, "t" + std::to_string(i),
+            [&](const std::shared_ptr<runtime::RuntimeTask>&, runtime::WorkerExecutionResult result) {
+                if (result == runtime::WorkerExecutionResult::SUCCEEDED) succeeded.fetch_add(1);
+            }));
+    }
+
+    const auto t0 = std::chrono::steady_clock::now();
+    engine.stop(runtime::RuntimeEngine::ShutdownMode::GRACEFUL, 2s);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+
+    CHECK(succeeded.load() == 3);   // ★ 三个都成功：DRAIN 不丢请求
+    CHECK(elapsed >= 60);           // 确实等了（1 worker × 3 任务 × 30ms）
+}
+
+// 5) DRAIN 超时：到了 deadline 还不完，降级为取消（不能无限等）
+static void TestDrainDeadlineFallsBack()
+{
+    std::mutex m;
+    std::condition_variable cv;
+    bool started = false;
+
+    auto blocking_executor = [&](const std::string&, const runtime::CancellationToken& token) -> std::string
+    {
+        {
+            std::unique_lock<std::mutex> lock(m);
+            started = true;
+            cv.notify_all();
+        }
+        for (int i = 0; i < 5000; ++i)
+        {
+            if (token.cancelled()) throw std::runtime_error("CANCELLED");
+            std::this_thread::sleep_for(2ms);
+        }
+        return "late";
+    };
+
+    runtime::RuntimeEngine engine(blocking_executor, 1, 8);
+
+    std::atomic<int> failed{0};
+    CHECK(engine.submit(1, "block",
+        [&](const std::shared_ptr<runtime::RuntimeTask>&, runtime::WorkerExecutionResult result) {
+            if (result == runtime::WorkerExecutionResult::FAILED) failed.fetch_add(1);
+        }));
+
+    {
+        std::unique_lock<std::mutex> lock(m);
+        cv.wait_for(lock, 2s, [&] { return started; });
+    }
+
+    const auto t0 = std::chrono::steady_clock::now();
+    engine.stop(runtime::RuntimeEngine::ShutdownMode::GRACEFUL, 100ms);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+
+    CHECK(elapsed >= 100);   // 至少等满 deadline
+    CHECK(elapsed < 2000);   // 但没有无限等
+    CHECK(failed.load() == 1);   // 超时后任务被取消并回 FAILED
+}
+
 int main()
 {
     TestRepeatedStopIsSafe();
     TestForceDrainsExactlyOnce();
     TestStopFromCompletionCallback();
+    TestDrainWaitsForAll();
+    TestDrainDeadlineFallsBack();
 
     if (g_failures == 0)
     {

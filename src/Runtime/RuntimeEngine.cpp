@@ -231,8 +231,37 @@ namespace runtime
         return false;
     }
 
-    void RuntimeEngine::stop(ShutdownMode mode)
+    std::vector<std::pair<std::shared_ptr<RuntimeTask>, RuntimeEngine::Completion>>
+    RuntimeEngine::drainPendingLocked()
     {
+        std::vector<std::pair<std::shared_ptr<RuntimeTask>, Completion>> failed;
+
+        auto drained = scheduler_.drainAllPending();
+        for (auto& task : drained)
+        {
+            if (!task) continue;
+
+            // PENDING 不能直接 fail，先转 SCHEDULED
+            task->schedule();
+            task->fail("SERVER_SHUTTING_DOWN");
+
+            auto it = completions_.find(task->id());
+            if (it != completions_.end())
+            {
+                failed.emplace_back(task, std::move(it->second));
+                completions_.erase(it);
+            }
+        }
+        return failed;
+    }
+
+    void RuntimeEngine::stop(ShutdownMode mode, std::chrono::milliseconds drainDeadline)
+    {
+        // 在 worker 线程里调 stop()（例如 completion 回调里）不能 join 自己，
+        // 也不能"等自己在途任务跑完"——那个在途任务就是当前这个回调，永远等不到。
+        // 所以这种情况下只发信号，join 和 drain 都交给别的线程（通常是析构函数）。
+        const bool called_from_worker = isWorkerThread();
+
         // 需要在锁外调用的 completion 回调
         std::vector<std::pair<std::shared_ptr<RuntimeTask>, Completion>> forcedFailures;
 
@@ -240,33 +269,19 @@ namespace runtime
             std::lock_guard<std::mutex> lock(mutex_);
             stopping_ = true;
 
-            // 取消所有正在执行的任务
-            for (auto& token : activeTokens_)
+            // GRACEFUL：**先不取消**，让在途任务跑完（drain 语义）
+            // FORCE：立刻取消在途 + 排空 pending
+            if (mode == ShutdownMode::FORCE)
             {
-                token.cancel();
-            }
-
-            // FORCE 模式：把 pending 队列里的任务全部取出
-            // 只排空一次；GRACEFUL 之后再调 FORCE 仍然可以升级
-            if (mode == ShutdownMode::FORCE && !forceDrained_)
-            {
-                forceDrained_ = true;
-
-                auto drained = scheduler_.drainAllPending();
-                for (auto& task : drained)
+                for (auto& token : activeTokens_)
                 {
-                    if (!task) continue;
+                    token.cancel();
+                }
 
-                    // PENDING 不能直接 fail，先转 SCHEDULED
-                    task->schedule();
-                    task->fail("SERVER_SHUTTING_DOWN");
-
-                    auto it = completions_.find(task->id());
-                    if (it != completions_.end())
-                    {
-                        forcedFailures.emplace_back(task, std::move(it->second));
-                        completions_.erase(it);
-                    }
+                if (!forceDrained_)
+                {
+                    forceDrained_ = true;
+                    forcedFailures = drainPendingLocked();
                 }
             }
         }
@@ -283,9 +298,51 @@ namespace runtime
 
         cv_.notify_all();
 
-        // 在 worker 线程里调 stop()（例如 completion 回调里）不能 join 自己。
-        // 这里只负责发信号；workerLoop 会在队列排空后自行退出，join 交给析构函数。
-        if (isWorkerThread())
+        // GRACEFUL（drain + deadline）：等"在途 + 排队"全部自然完成，最多等 deadline；
+        // 超时才取消剩余在途、把 pending 标失败。
+        // 注意：谓词里必须直接读 activeCount_ 成员（activeCount() 会重复锁 mutex_ 而死锁）；
+        // scheduler_.pendingCount() 用的是 Scheduler 自己的锁，可以安全调用。
+        if (mode == ShutdownMode::GRACEFUL && !called_from_worker)
+        {
+            std::unique_lock<std::mutex> lock(mutex_);
+
+            const bool drained = cv_.wait_for(lock, drainDeadline, [this]
+            {
+                return scheduler_.pendingCount() == 0 && activeCount_ == 0;
+            });
+
+            if (!drained)
+            {
+                // 超时兜底：取消在途 + pending 全部标失败（等价于 FORCE 的收尾）
+                for (auto& token : activeTokens_)
+                {
+                    token.cancel();
+                }
+
+                if (!forceDrained_)
+                {
+                    forceDrained_ = true;
+                    forcedFailures = drainPendingLocked();
+                }
+
+                lock.unlock();
+
+                for (auto& [task, cb] : forcedFailures)
+                {
+                    if (cb)
+                    {
+                        try { cb(task, WorkerExecutionResult::FAILED); }
+                        catch (...) {}
+                    }
+                }
+
+                cv_.notify_all();
+                lock.lock();
+            }
+        }
+
+        // 在 worker 线程里调 stop()：只发信号，join 交给析构函数
+        if (called_from_worker)
         {
             return;
         }

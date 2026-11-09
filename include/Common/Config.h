@@ -22,8 +22,6 @@ struct Config
     int rate_limit_burst = 200;
     int rate_limit_per_sec = 100;
 
-    // 注意：后端**不做**限流，所以这里没有 backend 的限流参数。
-    // 后端看到的连接是网关的复用连接，按连接限流维度是错的；
     // 客户端准入限流只在网关做。
 
     // Backend 注册到 Redis 时使用的地址。单机默认 127.0.0.1
@@ -33,6 +31,11 @@ struct Config
     // Redis 地址 Gateway 和 Backend 共用
     std::string redis_host = "127.0.0.1";
     uint16_t redis_port = 6379;
+
+    // 停服模式：graceful（drain + deadline，默认）| force（全丢）
+    // shutdown_deadline_ms 是 graceful 模式下"等任务自然完成"的最长时间。
+    std::string shutdown_mode = "graceful";
+    int shutdown_deadline_ms = 10000;
 
     // 获取单例
     static Config& instance();

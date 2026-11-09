@@ -178,9 +178,17 @@ int main(int argc, char* argv[]) try
         return conn;
     });
 
-    server.setBeforeIoShutdownCallback([&runtimeEngine]() 
+    server.setBeforeIoShutdownCallback([&runtimeEngine, &config]() 
     {
-        runtimeEngine.stop();
+        // 停服模式由 --shutdown-mode 决定：
+        //   graceful（默认）= drain + deadline：先不取消，等任务自然完成；
+        //                    超过 --shutdown-deadline-ms 才取消剩余、标失败。
+        //   force          = 立刻取消 + 丢弃 pending，秒级退出。
+        const auto mode = (config.shutdown_mode == "force")
+            ? runtime::RuntimeEngine::ShutdownMode::FORCE
+            : runtime::RuntimeEngine::ShutdownMode::GRACEFUL;
+
+        runtimeEngine.stop(mode, std::chrono::milliseconds(config.shutdown_deadline_ms));
     });
 
     server.setBusinessHandler([&runtimeEngine](std::shared_ptr<Connection> conn, const std::any& message) 

@@ -278,7 +278,9 @@ phase_shutdown() {
     echo "run,ms" > "$out"
 
     for i in $(seq 1 20); do
-        "$BUILD_DIR/AgentRuntimeBackend" --port=9101 > /tmp/bench_be_sd.log 2>&1 &
+        # 用较短的 deadline，避免 20 次 × 默认 10s 把脚本拖成 200 秒
+        "$BUILD_DIR/AgentRuntimeBackend" --port=9101 --shutdown-deadline-ms=1500 \
+            > /tmp/bench_be_sd.log 2>&1 &
         local be=$!
         sleep 1
 

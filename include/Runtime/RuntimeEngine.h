@@ -5,6 +5,7 @@
 #include "CancellationToken.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <functional>
@@ -32,16 +33,22 @@ namespace runtime
         // clientId 用于公平调度与按客户端的队列配额。
         bool submit(Scheduler::ClientId clientId, std::string input, Completion completion);
 
-        // 关闭模式。GRACEFUL：等待已提交任务执行完；FORCE：立即丢弃所有
-        // 尚未执行的任务，通知它们的 completion 回调以 FAILED，然后退出
+        // 关闭模式：
+        //   GRACEFUL —— **drain + deadline**（业界标准，对标 K8s terminationGracePeriodSeconds）：
+        //               先停收新任务，然后**不取消任何在途任务**，等"在途 + 排队"自然完成；
+        //               只在超过 drainDeadline 后才取消剩余在途任务、把 pending 标失败。
+        //               语义：deadline 内"每个请求都有真实结论"；超时后"每个请求至少有明确结论"。
+        //   FORCE    —— 立刻取消在途、pending 全部标失败，秒级退出。
         enum class ShutdownMode
         {
             GRACEFUL,
             FORCE
         };
 
-        // mode 默认 GRACEFUL，向后兼容
-        void stop(ShutdownMode mode = ShutdownMode::GRACEFUL);
+        // mode 默认 GRACEFUL；drainDeadline 只在 GRACEFUL 下生效。
+        // 选了大的 deadline 就要接受"关闭可能等这么久"（这是 drain 语义的代价）。
+        void stop(ShutdownMode mode = ShutdownMode::GRACEFUL,
+                  std::chrono::milliseconds drainDeadline = std::chrono::seconds(10));
 
         // 取消某个客户端的所有待调度任务 正在执行的任务不受影响
         // 被取消的任务会收到 FAILED 和错误码 "CLIENT_DISCONNECTED"
@@ -56,6 +63,10 @@ namespace runtime
         // stop() 是否由本引擎的 worker 线程调用。
         // 是的话不能 join 自己，只能发完取消信号后返回，由析构函数负责 join。
         bool isWorkerThread() const;
+
+        // 把 pending 队列全部摘掉并标失败，返回需要在锁外调用的 completion。
+        // 调用方必须持有 mutex_；forceDrained_ 由调用方负责置位。
+        std::vector<std::pair<std::shared_ptr<RuntimeTask>, Completion>> drainPendingLocked();
 
         Scheduler scheduler_;
         Worker::Executor executor_;

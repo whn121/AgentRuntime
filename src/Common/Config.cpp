@@ -23,6 +23,8 @@ void Config::parseArgs(int argc, char* argv[])
         {"engine-workers", required_argument, 0, 'E'},
         {"rate-burst",   required_argument, 0, 'B'},
         {"rate-limit",   required_argument, 0, 'L'},
+        {"shutdown-mode", required_argument, 0, 'S'},
+        {"shutdown-deadline-ms", required_argument, 0, 'D'},
         {"bind-host",  required_argument, 0, 'b'},
         {"redis-host", required_argument, 0, 'r'},
         {"redis-port", required_argument, 0, 'R'},
@@ -45,7 +47,7 @@ void Config::parseArgs(int argc, char* argv[])
     optind = 1;
     int opt;
     // 循环解析参数，直到返回 -1
-    while ((opt = getopt_long(argc, argv, "p:i:w:E:B:L:b:r:R:h", long_options, nullptr)) != -1)
+    while ((opt = getopt_long(argc, argv, "p:i:w:E:B:L:S:D:b:r:R:h", long_options, nullptr)) != -1)
     {
         switch (opt) 
         {
@@ -55,6 +57,12 @@ void Config::parseArgs(int argc, char* argv[])
             case 'E': engine_workers = number(optarg, 1024); break;
             case 'B': rate_limit_burst = number(optarg, 1000000); break;
             case 'L': rate_limit_per_sec = (std::atoi(optarg) == 0) ? 0 : number(optarg, 1000000); break;
+            case 'S':
+                shutdown_mode = optarg;
+                if (shutdown_mode != "graceful" && shutdown_mode != "force")
+                    throw std::invalid_argument("invalid --shutdown-mode (graceful|force)");
+                break;
+            case 'D': shutdown_deadline_ms = number(optarg, 3600000); break;
             case 'b': bind_host = optarg; break;
             case 'r': redis_host = optarg; break;
             case 'R': redis_port = static_cast<uint16_t>(number(optarg, 65535)); break;
@@ -67,6 +75,8 @@ void Config::parseArgs(int argc, char* argv[])
                     << "  --engine-workers=N RuntimeEngine threads (default 2)\n"
                     << "  --rate-burst=N    客户端令牌桶容量 (gateway, default 200)\n"
                     << "  --rate-limit=N    客户端限流速率/s (gateway, 0=off, default 100)\n"
+                    << "  --shutdown-mode=M 停服模式 graceful|force (default graceful)\n"
+                    << "  --shutdown-deadline-ms=N  graceful 模式最长等待 (default 10000)\n"
                     << "  --bind-host=HOST  address registered to Redis (default 127.0.0.1)\n"
                     << "  --redis-host=HOST Redis host (default 127.0.0.1)\n"
                     << "  --redis-port=N    Redis port (default 6379)\n";
