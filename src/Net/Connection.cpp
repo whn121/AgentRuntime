@@ -6,12 +6,18 @@
 #include <sys/uio.h> //解决buffer一次只能读一块, 减少系统调用
 #include <utility>
 #include <queue>
+#include <atomic>
 
+
+// 逻辑客户端标识：进程内单调递增，永不复用。
+// 不能用 fd 当身份——fd 是内核资源，连接关闭后会被复用给新连接，
+// 那时"取消旧连接的任务"就可能误伤新连接。
+static std::atomic<std::uint64_t> g_next_client_id{1};
 
 // 构造函数：转移 Channel 和 Protocol 的所有权，保存 EventLoop 指针
 Connection::Connection(int afd, std::unique_ptr<Channel> channel, EventLoop* loop, std::unique_ptr<Protocol> protocol,
                        double rate_capacity, double rate_refill_per_sec)
-    : afd_(afd), clientId_(afd), loop_(loop), channel_(std::move(channel)), protocol_(std::move(protocol)),
+    : afd_(afd), clientId_(g_next_client_id.fetch_add(1, std::memory_order_relaxed)), loop_(loop), channel_(std::move(channel)), protocol_(std::move(protocol)),
       rateLimiter_(rate_capacity, rate_refill_per_sec), rate_capacity_(rate_capacity)
 {
     Metrics::connection_constructed.fetch_add(1, std::memory_order_relaxed);
@@ -520,7 +526,8 @@ void Connection::notifyCancelOnce()
 {
     // 所有关闭路径（close / read 错误 / write 错误 / 协议错误 / forceCloseOnLoopStop）
     // 最终都走 handleClose 或 forceCloseOnLoopStop，都调用本函数。
-    // 用不可变的 clientId_，不用 afd_——handleClose 执行到后面 afd_ 可能已经被置 -1。
+    // 用不可变的 clientId_（逻辑身份），不用 afd_——afd_ 可能已被置 -1，
+    // 而且 fd 会被内核复用，不能当身份。
     // CAS 保证 cancelHook_ 恰好一次。
     bool expected = false;
     if (cancelHook_ && cancelHookCalled_.compare_exchange_strong(expected, true))

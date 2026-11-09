@@ -20,7 +20,8 @@ int main()
     std::atomic<int> closeCount{0};
     std::atomic<int> fdWasValidWhenClosed{0};
     std::atomic<int> cancelCount{0};
-    std::atomic<int> cancelArgWasOriginalFd{0};
+    std::atomic<int> cancelArgWasClientId{0};
+    std::atomic<std::uint64_t> expectedClientId{0};
 
     const uint64_t constructedBefore = Metrics::connection_constructed.load();
     const uint64_t destructedBefore = Metrics::connection_destructed.load();
@@ -42,13 +43,16 @@ int main()
         {
             auto conn = std::make_shared<Connection>(fd, std::make_unique<Channel>(fd), loop, std::make_unique<MyProtocol>());
 
-            // 测试用的 cancelHook：验证恰好一次、参数是原始 fd（不是 -1）
-            conn->setCancelHook([&](int clientId) 
+            // 记录这条连接自己的逻辑 clientId（单调递增，不是 fd）
+            expectedClientId.store(conn->clientId());
+
+            // 测试用的 cancelHook：验证恰好一次、参数是逻辑 clientId（不是 -1，也不是 fd）
+            conn->setCancelHook([&](std::uint64_t clientId) 
             {
                 cancelCount.fetch_add(1);
-                if (clientId == connFd)
+                if (clientId == expectedClientId.load())
                 {
-                    cancelArgWasOriginalFd.fetch_add(1);
+                    cancelArgWasClientId.fetch_add(1);
                 }
             });
 
@@ -89,9 +93,9 @@ int main()
     assert(destructed == 1);
     assert(constructed == destructed);
 
-    // cancelHook 恰好一次，且参数是原始 fd（不是 -1）
+    // cancelHook 恰好一次，且参数是这条连接自己的逻辑 clientId（不是 -1，也不是 fd）
     assert(cancelCount.load() == 1);
-    assert(cancelArgWasOriginalFd.load() == 1);
+    assert(cancelArgWasClientId.load() == 1);
 
     return 0;
 }

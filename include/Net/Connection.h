@@ -14,6 +14,7 @@
 #include <queue>
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include "ThreadPool/TaskQueue.h"
 
 
@@ -64,8 +65,13 @@ public:
     void setBusinessHandler(BusinessHandler h) { businessHandler_ = std::move(h); }
 
     // 客户端断开时调用，用于通知上层取消该连接关联的待调度任务。
-    // 保证只调用一次。
-    void setCancelHook(std::function<void(int)> hook) { cancelHook_ = std::move(hook); }
+    // 保证只调用一次。参数是**逻辑 clientId**（单调递增），不是 fd。
+    void setCancelHook(std::function<void(std::uint64_t)> hook) { cancelHook_ = std::move(hook); }
+
+    // 逻辑客户端标识：进程内单调递增，永不复用。
+    // 为什么不用 fd：fd 是内核资源、会被复用——连接 A 关了 fd 可能分给 B，
+    // 此时"取消 A 的任务"就可能误伤 B。身份不该依赖内核资源的生命周期。
+    std::uint64_t clientId() const { return clientId_; }
 
     // 活跃检测,超时踢人 减少一个额外线程的开销
     void updateActiveTime() { last_active_ = std::chrono::steady_clock::now(); }
@@ -101,7 +107,7 @@ public:
     
 private:
     int afd_;                                  // socket 文件描述符, finishClose 后置 -1
-    const int clientId_;                       // 构造时的 fd, 永不改变。cancelHook 等需要稳定标识的场景用它
+    const std::uint64_t clientId_;             // 逻辑身份（单调递增），与 fd 生命周期无关
     EventLoop* loop_;                          // 所属的事件循环（该连接所有事件在此 loop 中处理）
     Buffer inBuffer_;                          // 输入缓冲区
     Buffer outBuffer_;                         // 输出缓冲区
@@ -203,7 +209,7 @@ private:
     double rate_capacity_ = RATE_CAPACITY;
 
     // 取消回调。close() 里调用一次，通知上层（RuntimeEngine）清理。
-    std::function<void(int)> cancelHook_;
+    std::function<void(std::uint64_t)> cancelHook_;
 
     // 保证 cancelHook_ 只调一次。
     std::atomic<bool> cancelHookCalled_{false};

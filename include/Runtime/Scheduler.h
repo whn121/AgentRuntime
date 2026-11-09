@@ -3,6 +3,7 @@
 #include "RuntimeTask.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <vector>
 #include <memory>
@@ -19,7 +20,8 @@ namespace runtime
 
         // 客户端标识：当前使用连接 fd。fd 会被复用，但复用时旧连接的任务
         // 已进入终态并从队列移除，不会与新连接的任务混排。
-        using ClientId = int;    
+        // 逻辑客户端标识（单调递增，不是 fd）——fd 会被内核复用，不能当身份
+        using ClientId = std::uint64_t;
 
         Scheduler() = default;
 

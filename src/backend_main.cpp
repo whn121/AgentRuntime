@@ -169,8 +169,8 @@ int main(int argc, char* argv[]) try
             0.0);  // rate_refill_per_sec
 
         // 连接关闭时通知 RuntimeEngine 取消该 clientId 的待调度任务。
-        // clientId 就是 fd，和 businessHandler 里传给 submit 的值一致。
-        conn->setCancelHook([&runtimeEngine](int clientId)
+        // clientId 是连接自己的逻辑标识（单调递增），不是 fd——fd 会被内核复用。
+        conn->setCancelHook([&runtimeEngine](std::uint64_t clientId)
         {
             runtimeEngine.cancelByClient(clientId);
         });
@@ -219,8 +219,8 @@ int main(int argc, char* argv[]) try
             const auto requestId = request.id_;
             const auto input = request.payload_;
 
-            // 以连接 fd 作为客户端标识，用于公平调度与按客户端配额。
-            const int clientId = conn->getChannel()->getFd();
+            // 用逻辑 clientId（不是 fd）：fd 会被内核复用，不能当身份。
+            const auto clientId = conn->clientId();
 
             // ★ 这里刻意【不做】限流。
             // 后端看到的连接是网关的复用连接（一条连接承载所有客户端流量），

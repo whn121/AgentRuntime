@@ -70,9 +70,11 @@ int main()
 
         // businessHandler：每个请求都提交到 RuntimeEngine
         pool.setBusinessHandler([&](std::shared_ptr<Connection> conn, const std::any& msg) {
-            int fd = conn->getChannel()->getFd();
+            // 用逻辑 clientId（与 cancelHook 收到的值一致）；
+            // 以前这里用 fd，靠"fd 恰好等于 clientId"工作——A3 把这个隐式耦合打掉了。
+            const auto clientId = conn->clientId();
             (void)msg;
-            engine.submit(fd, "task",
+            engine.submit(clientId, "task",
                 [&](const std::shared_ptr<runtime::RuntimeTask>& t,
                     runtime::WorkerExecutionResult r) {
                     if (r == runtime::WorkerExecutionResult::SUCCEEDED) succeeded.fetch_add(1);

@@ -167,6 +167,16 @@ ctest --test-dir build-asan --output-on-failure
 
 ## 设计取舍与已知边界
 
+- **限流的公平性**：全局桶只封总量、不保证公平（一个客户端能吃光额度）；
+  按身份（API key）限流未做，因为协议里没有身份字段。
+- **`clientId` 是逻辑身份**：进程内单调递增，**不是 fd**。fd 会被内核复用，
+  用它当身份时"取消旧连接任务"可能误伤新连接；改逻辑 id 后这个隐患消失
+  （改之前 `test_cancel_by_client_e2e` 恰好靠"fd == clientId"工作，改完立刻暴露）。
+- **网关切分探活与客户端心跳靠 id**：探活用保留 id 段（`0xF0000000` 起）+ 登记表，
+  不再用"消息类型"猜来源——类型只表示语义，不表示来源。
+- **EMFILE 退避是非阻塞的**：批量丢弃 64 个 + 一次性 timerfd 退避 100ms，
+  不在 IO 线程里 sleep。
+
 1. **`stop(GRACEFUL)` 取消正在执行的任务，`stop(FORCE)` 额外清空 pending 队列**
    `GRACEFUL` 下正在执行的任务会被 `cancel()`——这是有意为之：模型调用可能阻塞 120 秒，等它完成不叫“优雅关闭”，叫“关闭卡死”。`pending_queue_` 中的任务不受影响，会继续执行完毕，避免“提交成功但响应丢失”的不一致。`FORCE` 下额外调用 `Scheduler::drainAllPending()` 清空 pending 队列，每个任务 `fail("SERVER_SHUTTING_DOWN")`，`completion` 回调收到 `FAILED`。**两种模式都依赖 `executor_` 协作式响应取消令牌**——不检查令牌的第三方库，`join()` 仍会等它自然返回。
 
