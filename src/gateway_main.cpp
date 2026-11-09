@@ -105,8 +105,10 @@ int main(int argc, char* argv[]) try
             // 是后端相应
             if (is_backend)
             {
-                // 心跳响应体直接忽略, 并复活吧我的爱人!!!!
-                if (msg.type_ == MyType::HEARTBEAT_RESP)
+                // 只有"我们自己发的探活"的响应才用来更新健康状态。
+                // 判据是 id（登记在 outstanding_probes 里），不是类型：
+                // 客户端自己的心跳响应也是 HEARTBEAT_RESP，按类型判会把它们吞掉。
+                if (msg.type_ == MyType::HEARTBEAT_RESP && state->ConsumeProbeId(msg.id_))
                 {
                     // 更新对应后端的last_pong_ms
                     long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>
@@ -348,7 +350,7 @@ int main(int argc, char* argv[]) try
             {
                 MyMessage hb;
                 hb.type_    = MyType::HEARTBEAT_REQ;
-                hb.id_      = 0;
+                hb.id_      = state->AllocProbeId();   // 保留 id 段，便于区分客户端心跳
                 hb.payload_ = "";
                 conn->sendResponse(hb);
             }

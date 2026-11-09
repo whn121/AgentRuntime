@@ -1,6 +1,8 @@
 #pragma once
 
+#include <atomic>
 #include <string>
+#include <unordered_set>
 
 #include "Gateway/PendingRequest.h"
 #include "Protocol/MyProtocol.h"
@@ -33,6 +35,31 @@ struct GatewayState
 
     // 全局requestId 生成器
     std::atomic<uint64_t> next_new_id{1};
+
+    // ── 探活 id ──
+    // 问题：以前用"类型 == HEARTBEAT_RESP"来识别"网关自己的探活回包"，
+    // 但客户端自己的心跳响应也是这个类型，于是被网关吞掉，客户端永远收不到。
+    // 修法：探活请求使用保留 id 段 + 登记到 outstanding_probes，
+    // 收到响应时先按 id 查表——类型只表示语义，不能表示来源。
+    static constexpr uint32_t PROBE_ID_BASE = 0xF0000000u;
+    std::atomic<uint32_t> next_probe_seq{1};
+    std::unordered_set<uint32_t> outstanding_probes;
+    mutable std::mutex probes_mutex;
+
+    uint32_t AllocProbeId()
+    {
+        const uint32_t id = PROBE_ID_BASE | (next_probe_seq.fetch_add(1) & 0x0FFFFFFFu);
+        std::lock_guard<std::mutex> lock(probes_mutex);
+        outstanding_probes.insert(id);
+        return id;
+    }
+
+    // 命中说明"这是我们自己发的探活响应"；未命中说明是客户端消息的响应，要转发回去
+    bool ConsumeProbeId(uint32_t id)
+    {
+        std::lock_guard<std::mutex> lock(probes_mutex);
+        return outstanding_probes.erase(id) > 0;
+    }
 
     // 轮询索引
     std::atomic<size_t> rr_index{0};
