@@ -1,9 +1,11 @@
 #pragma once
 
 #include <atomic>
+#include <memory>
 #include <string>
 #include <unordered_set>
 
+#include "Common/TokenBucket.h"
 #include "Gateway/PendingRequest.h"
 #include "Protocol/MyProtocol.h"
 
@@ -89,6 +91,18 @@ struct GatewayState
         return nullptr; // 全部不健康
     }
 
+    // 全局令牌桶（可选）。nullptr = 关闭。
+    // 每连接桶防单点超速，全局桶防"多开连接"绕过；代价是不公平。
+    // TokenBucket 内部自带锁，可跨线程直接使用。
+    std::unique_ptr<TokenBucket> global_bucket;
+
+    // 尝试从全局桶取一个令牌；未启用时恒为 true
+    bool allowGlobal(double now_sec)
+    {
+        if (!global_bucket) return true;
+        return global_bucket->tryAcquire(now_sec);
+    }
+
     // 统计指标
     struct Metrics
     {
@@ -100,6 +114,7 @@ struct GatewayState
         std::atomic<uint64_t> unknown_responses{0}; // 未知相应 (没人等的相应)
         std::atomic<uint64_t> dropped_client_gone{0}; // 客户端已经断开 (响应到了但客户端断了)
         std::atomic<uint64_t> rate_limited{0}; // 客户端被每连接令牌桶拦下的次数
+        std::atomic<uint64_t> global_rate_limited{0}; // 被网关全局令牌桶拦下的次数
     };
     Metrics metrics;
 

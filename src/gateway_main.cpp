@@ -67,6 +67,19 @@ int main(int argc, char* argv[]) try
     // 2.创建共享状态
     auto state = std::make_shared<GatewayState>();
 
+    // 2.1 可选的全局令牌桶：每连接桶挡不住"多开连接"（1000 连接 × 100/s），
+    //     全局限总量。0 = 关闭（默认），保持行为不变。
+    if (Config::instance().global_rate_limit_per_sec > 0)
+    {
+        const double rate = static_cast<double>(Config::instance().global_rate_limit_per_sec);
+        const double burst = (Config::instance().global_rate_burst > 0)
+            ? static_cast<double>(Config::instance().global_rate_burst)
+            : rate;
+        state->global_bucket = std::make_unique<TokenBucket>(burst, rate);
+        LOG_INFO("[Gateway] global rate limit enabled: burst=" + std::to_string(static_cast<long long>(burst))
+                 + " rate/s=" + std::to_string(static_cast<long long>(rate)));
+    }
+
     // 3.启动服务器，接收客户端连接
     Server server;
 
@@ -168,9 +181,22 @@ int main(int argc, char* argv[]) try
             }
 
             // 是客户端,处理
-            // 0.准入限流：必须放在网关，按"真实客户端连接"限。
-            //   放在后端是错的——后端看到的是网关的复用连接，一条连接承载所有客户端，
-            //   会把整片流量误判成单客户端超速（压测实测：50 客户端 10s 只有 630 个成功）。
+            // 0.准入限流：两级
+            //   a) 全局桶（可选）：封住"多开连接"绕过——1000 条连接 × 100/s 就是 10 万/s。
+            //      代价是不公平：一个客户端能吃光全局额度。真公平要按身份限流，协议暂无身份。
+            //   b) 每连接桶：防单点超速。
+            // 先查全局（更便宜、更硬的上限），再查每连接。
+            {
+                const double now_sec = std::chrono::duration<double>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+                if (!state->allowGlobal(now_sec))
+                {
+                    state->metrics.global_rate_limited.fetch_add(1);
+                    conn->sendResponse(MyMessage{MyType::ERROR_RESP, msg.id_, "RATE_LIMITED"});
+                    return;
+                }
+            }
+
             if (!conn->allowRequest())
             {
                 state->metrics.rate_limited.fetch_add(1);

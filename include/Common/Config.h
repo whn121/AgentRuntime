@@ -22,6 +22,13 @@ struct Config
     int rate_limit_burst = 200;
     int rate_limit_per_sec = 100;
 
+    // 全局令牌桶（网关进程级），0 = 关闭。
+    // 每连接桶挡不住"多开连接"：1000 条连接 × 100/s 就是 10 万/s。
+    // 全局桶封总量；代价是不公平（一个客户端能吃光全局额度）。
+    // 真公平要按身份（API key）限流，而协议里还没有身份字段。
+    int global_rate_limit_per_sec = 0;
+    int global_rate_burst = 0;   // 0 表示与 global_rate_limit_per_sec 相同
+
     // 客户端准入限流只在网关做。
 
     // Backend 注册到 Redis 时使用的地址。单机默认 127.0.0.1
