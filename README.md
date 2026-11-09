@@ -160,7 +160,7 @@ cmake --build build-asan -j
 ctest --test-dir build-asan --output-on-failure
 ```
 
-**结果**：11 个 CTest——Release 11/11、ASan+UBSan 11/11、TSan 11/11（需 `setarch -R`，
+**结果**：12 个 CTest——Release 12/12、ASan+UBSan 12/12（实测）；TSan 需 `setarch -R` 单独跑（
 见上）；Release 0 error、0 warning。端到端链路与四个故障场景实测输出归档在 `results/`：
 
 - `e2e_success.txt` —— Gateway → Backend → RuntimeEngine → 假 Qwen → 客户端，`type=5` 正常返回；
@@ -176,6 +176,7 @@ ctest --test-dir build-asan --output-on-failure
 | **调度要公平** | `test_scheduler`（FIFO + 配额）、`test_scheduler_fairness`（轮转不饿死） |
 | **取消与关闭不能漏** | `test_runtime_cancel`（令牌传播到执行层）、`test_cancel_by_client_e2e`（断开→取消整条链）、`test_close_drain`（排空 + 构造==析构 + cancelHook 恰好一次）、`test_stop_escalation`（幂等、FORCE 升级、不自 join） |
 | **边界要拒得住** | `test_protocol`（半包不消费、粘包、body_len 上/下限）、`test_token_bucket`（突发/补充/时间回退/reset） |
+| **凭据要验得住** | `test_hmac`（SHA-256 标准向量、RFC 4231 用例 1/2、令牌稳定性、篡改必失败、常数时间比较） |
 
 > **所有测试目标都加了 `-UNDEBUG`。** 这些测试大量使用 `assert`，而 `CMAKE_BUILD_TYPE=Release`
 > 会带 `-DNDEBUG` 把断言整体编译掉，测试就变成"永远通过"。这个问题是在 2026-11-01 的修复里发现的，
