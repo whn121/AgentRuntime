@@ -19,7 +19,6 @@ std::atomic<uint64_t> Metrics::runtime_active{0};
 std::atomic<uint64_t> Metrics::conn_max_send_queue_bytes{0};
 std::atomic<uint64_t> Metrics::conn_backpressure_paused{0};
 std::atomic<uint64_t> Metrics::conn_backpressure_resumed{0};
-std::atomic<uint64_t> Metrics::conn_rejected_rate_limited{0};
 std::atomic<uint64_t> Metrics::connection_constructed{0};
 std::atomic<uint64_t> Metrics::connection_destructed{0};
 
@@ -39,7 +38,6 @@ std::string Metrics::Summary()
     s += " runtime_active=" + std::to_string(v(runtime_active));
     s += " runtime_rejected_capacity=" + std::to_string(v(runtime_rejected_capacity));
     s += " scheduler_rejected_quota=" + std::to_string(v(scheduler_rejected_quota));
-    s += " rate_limited=" + std::to_string(v(conn_rejected_rate_limited));
     s += " send_high_water_closed=" + std::to_string(v(conn_closed_send_high_water));
     s += " bp_paused=" + std::to_string(v(conn_backpressure_paused));
     s += " bp_resumed=" + std::to_string(v(conn_backpressure_resumed));

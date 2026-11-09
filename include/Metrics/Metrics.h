@@ -67,9 +67,8 @@ struct Metrics {
     // 软背压恢复读取的次数
     static std::atomic<uint64_t> conn_backpressure_resumed;
 
-    // 每连接令牌桶限流拒绝的次数（RATE_LIMITED）
-    // 和 conn_rejected_submit_failed 区分：那个是队列满，这个是客户端发太快被准入层拦下
-    static std::atomic<uint64_t> conn_rejected_rate_limited;
+    // 注意：客户端准入限流的拒绝计数在【网关】的 GatewayState::Metrics 里，
+    // 不在这个全局结构里——因为限流只在网关做（后端刻意不限流）。
 
     // 一行式快照，用于退出时打印（暂无 /metrics 端点，先靠日志留证据）。
     // 重点：connection_constructed == connection_destructed 说明没有连接泄漏。

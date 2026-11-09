@@ -157,22 +157,16 @@ int main(int argc, char* argv[]) try
     1024     // 最多排队等待的任务数
     );
     Server server;
-        server.setcreator([&runtimeEngine, &config](int fd, EventLoop* loop) 
+        server.setcreator([&runtimeEngine](int fd, EventLoop* loop) 
     {
-        // 后端**默认不限流**：它看到的连接是网关的复用连接，一条连接承载所有客户端
-        // 流量，按连接限流会把整片流量误判成单客户端超速。
-        // 客户端准入限流在网关按真实客户端连接做（见 gateway_main.cpp）。
-        // 仅当后端被"直连部署"时，用 --backend-rate-limit=N 显式打开。
-        // 只有显式 --backend-rate-limit=N 才生效；默认 0 = 不限流。
-        const double rate_refill_per_sec = static_cast<double>(config.backend_rate_limit_per_sec);
-        const double rate_capacity = (config.backend_rate_limit_per_sec > 0)
-            ? static_cast<double>(config.rate_limit_burst)
-            : 0.0;
-
+        // 后端**不限流**（容量传 0 → allowRequest() 恒 true）：
+        // 它看到的连接是网关的复用连接，一条连接承载所有客户端流量，
+        // 按连接限流会把整片流量误判成单客户端超速。
+        // 客户端准入限流只在网关按真实客户端连接做（见 gateway_main.cpp）。
         auto conn = std::make_shared<Connection>(fd, std::make_unique<Channel>(fd), loop,
             std::make_unique<MyProtocol>(),
-            rate_capacity,
-            rate_refill_per_sec);
+            0.0,   // rate_capacity：0 = 关闭
+            0.0);  // rate_refill_per_sec
 
         // 连接关闭时通知 RuntimeEngine 取消该 clientId 的待调度任务。
         // clientId 就是 fd，和 businessHandler 里传给 submit 的值一致。
@@ -220,17 +214,11 @@ int main(int argc, char* argv[]) try
             // 以连接 fd 作为客户端标识，用于公平调度与按客户端配额。
             const int clientId = conn->getChannel()->getFd();
 
-            // 每连接令牌桶：只有 --backend-rate-limit>0（直连后端部署）时才可能拒绝；
-            // 经网关时容量为 0，allowRequest() 立即返回 true，这个分支不会触发。
-            // 放业务线程而不是 IO 线程，是为了不让限流逻辑占用 IO 线程。
-            if (!conn->allowRequest())
-            {
-                Metrics::conn_rejected_rate_limited.fetch_add(1, std::memory_order_relaxed);
-                conn->sendRaw(MyProtocol::encodeMessage(
-                    MyType::RUNTIME_TASK_FAILED, requestId, "RATE_LIMITED"));
-                return;
-            }
-
+            // ★ 这里刻意【不做】限流。
+            // 后端看到的连接是网关的复用连接（一条连接承载所有客户端流量），
+            // 按连接限流会把整片流量误判成"单客户端超速"——压测实测：50 客户端
+            // 10 秒只有 630 个成功（= 3 条后端连接 × 210）。
+            // 客户端准入限流只在网关做（见 gateway_main.cpp），维度才对。
             const bool accepted = runtimeEngine.submit(clientId, input, [conn, requestId]
                 (const std::shared_ptr<runtime::RuntimeTask>& task, runtime::WorkerExecutionResult result)
             {
