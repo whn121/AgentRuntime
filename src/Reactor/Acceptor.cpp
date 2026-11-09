@@ -2,9 +2,8 @@
 #include <fcntl.h>       // fcntl / open / O_CLOEXEC
 #include <unistd.h>      // close
 #include <netinet/tcp.h> //关闭Nagle算法(防止大量小包等待数据满了再发)
+#include <sys/timerfd.h> // EMFILE 非阻塞退避
 #include <cstring>       // strerror
-#include <chrono>        // EMFILE 退避
-#include <thread>        // std::this_thread::sleep_for
 #include "Logger/AsyncLogger.h"
 
 
@@ -14,10 +13,35 @@ Acceptor::Acceptor(int fd, EventLoop* loop)
 {
     // 预留 fd 用于 EMFILE 时腾名额（见 handleAccept）
     reserve_fd_ = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+
+    // 预创建退避定时器：fd 耗尽时再创建会失败，所以必须现在就建好；
+    // 平时不上弦（it_value = 0），不产生任何事件。
+    backoff_fd_ = ::timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+    if (backoff_fd_ >= 0)
+    {
+        backoff_channel_ = std::make_unique<Channel>(backoff_fd_);
+        backoff_channel_->setreadCallBack([this] { HandleBackoff(); });
+        loop_->updateChannel(backoff_channel_.get(), EPOLLIN);
+    }
+    else
+    {
+        LOG_WARN(std::string("timerfd_create for EMFILE backoff failed: ") + strerror(errno)
+                 + "; fallback = resume reading immediately");
+    }
 }
 
 Acceptor::~Acceptor()
 {
+    if (backoff_channel_)
+    {
+        loop_->removeChannel(backoff_channel_.get());
+        backoff_channel_.reset();
+    }
+    if (backoff_fd_ >= 0)
+    {
+        ::close(backoff_fd_);
+        backoff_fd_ = -1;
+    }
     if (reserve_fd_ >= 0)
     {
         ::close(reserve_fd_);
@@ -42,9 +66,97 @@ void Acceptor::stop()
     // 必须在所属Eventloop线程中注销Channel
     loop_->assertInLoopThread();
     loop_->removeChannel(channel_.get());
-
-    // 注销成功或失败后, 都不再让Acceptor持有Channel
     channel_.reset();
+
+    // 退避定时器也要摘掉，避免停服后它仍挂在 epoll 上
+    if (backoff_channel_)
+    {
+        loop_->removeChannel(backoff_channel_.get());
+        backoff_channel_.reset();
+    }
+}
+
+// ── EMFILE 处理：批量丢弃 ──
+// 每次腾挪只能消费一个连接；积压多时要循环，但必须有上限，
+// 否则等于把 busy loop 换成"有上限的 busy loop"。
+int Acceptor::DropBurstedConnections()
+{
+    int dropped = 0;
+
+    while (dropped < kMaxDropPerRound)
+    {
+        // 腾出一个名额：关预留 → accept 一个 → 立刻关掉 → 补回预留
+        if (reserve_fd_ >= 0)
+        {
+            ::close(reserve_fd_);
+            reserve_fd_ = -1;
+        }
+
+        const int victim = accept4(fd_, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+        if (victim >= 0)
+        {
+            ::close(victim);   // 不服务这个连接，只把它从队列里消费掉
+        }
+
+        reserve_fd_ = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+        ++dropped;
+
+        if (victim < 0)
+        {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) break;          // 队列空了
+            if (errno != EMFILE && errno != ENFILE) break;               // 其他错误，交给外层
+        }
+    }
+
+    return dropped;
+}
+
+// ── EMFILE 处理：非阻塞退避 ──
+void Acceptor::ArmBackoff()
+{
+    if (backoff_fd_ < 0)
+    {
+        // 没有定时器就立刻恢复读，宁可多消耗点 CPU，也不能永久不接受连接
+        channel_->enableReading();
+        loop_->updateChannelEvent(channel_.get(), channel_->getEvents());
+        return;
+    }
+
+    // 摘掉 listen 的 EPOLLIN：退避期间不再被"有新连接"唤醒
+    channel_->disableReading();
+    loop_->updateChannelEvent(channel_.get(), channel_->getEvents());
+
+    itimerspec its{};
+    its.it_value.tv_sec = 0;
+    its.it_value.tv_nsec = static_cast<long>(kBackoffMs) * 1000L * 1000L;
+    its.it_interval.tv_sec = 0;    // ★ 一次性：到点触发一次，之后自动停
+    its.it_interval.tv_nsec = 0;
+
+    if (::timerfd_settime(backoff_fd_, 0, &its, nullptr) < 0)
+    {
+        LOG_WARN(std::string("EMFILE backoff timerfd_settime failed: ") + strerror(errno)
+                 + "; resume reading immediately");
+        channel_->enableReading();
+        loop_->updateChannelEvent(channel_.get(), channel_->getEvents());
+        return;
+    }
+
+    LOG_WARN("accept: fd exhausted; backing off " + std::to_string(kBackoffMs) + "ms");
+}
+
+void Acceptor::HandleBackoff()
+{
+    // 必须读掉到期次数，否则 timerfd 仍然可读 → LT 会一直触发（又是一个 busy loop）
+    uint64_t expirations = 0;
+    const ssize_t n = ::read(backoff_fd_, &expirations, sizeof(expirations));
+    if (n != static_cast<ssize_t>(sizeof(expirations)))
+    {
+        LOG_WARN("EMFILE backoff timerfd read failed");
+    }
+
+    channel_->enableReading();
+    loop_->updateChannelEvent(channel_.get(), channel_->getEvents());
+    LOG_INFO("accept: backoff finished; resume accepting");
 }
 
 // 设置新连接到来时的外部回调（用于将新连接分发给 IO 线程池）
@@ -82,28 +194,14 @@ void Acceptor::handleAccept()
 
             if (errno == EMFILE || errno == ENFILE)
             {
-                // fd 耗尽：先关掉预留 fd 腾出一个名额，accept 一个连接后立刻关掉，
-                // 再把预留 fd 补回来。必须消费掉一个，否则 listen fd 仍然可读，
-                // LT 会立刻再次触发，形成 100% CPU 的 busy loop。
-                if (reserve_fd_ >= 0)
+                // 批量丢弃 + 必要时非阻塞退避（见 Acceptor.h 的说明）。
+                // 不在这里 sleep：那会把主 loop 停住。
+                const int dropped = DropBurstedConnections();
+                if (dropped >= kMaxDropPerRound)
                 {
-                    ::close(reserve_fd_);
-                    reserve_fd_ = -1;
+                    ArmBackoff();   // 还打不住 → 摘 EPOLLIN + 一次性 timerfd 退避
                 }
-
-                int dropped = accept4(fd_, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
-                if (dropped >= 0) ::close(dropped);
-
-                reserve_fd_ = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
-
-                LOG_ERROR("accept: fd exhausted (EMFILE/ENFILE), dropped one connection");
-
-                // 退避：预留 fd 已经避免了"100% CPU 死循环"，但只要 accept 队列里还有
-                // 连接，LT 仍会立刻再次触发。压测（80 连接打满、fd 上限 64）实测 CPU 约 52%。
-                // 每次丢弃后睡 1ms，把丢弃速率限到 ~1000/s：既能把积压逐步消费掉，
-                // 又不会把 CPU 打满。1ms 的阻塞发生在 fd 耗尽的异常期，可以接受。
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                continue;
+                return;             // 立刻回到 epoll_wait
             }
 
             // ECONNABORTED / EPROTO：连接在 accept 之前被对端重置，
