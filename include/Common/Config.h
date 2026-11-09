@@ -22,6 +22,12 @@ struct Config
     int rate_limit_burst = 200;
     int rate_limit_per_sec = 100;
 
+    // 后端自身的每连接限流，**默认 0（关闭）**。
+    // 后端看到的是网关的复用连接，按连接限流会把整片流量误判成单客户端超速，
+    // 所以客户端准入限流在网关做。只有在"后端被直连部署"的特殊场景，
+    // 才用 --backend-rate-limit=N 显式打开（N 同时作为突发容量和补充速率）。
+    int backend_rate_limit_per_sec = 0;
+
     // Backend 注册到 Redis 时使用的地址。单机默认 127.0.0.1
     // 跨机器部署时填本机对外的 IP
     std::string bind_host = "127.0.0.1";

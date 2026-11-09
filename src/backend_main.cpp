@@ -159,13 +159,15 @@ int main(int argc, char* argv[]) try
     Server server;
         server.setcreator([&runtimeEngine, &config](int fd, EventLoop* loop) 
     {
-        // 后端**默认不限流**：它看到的连接是网关的复用连接，
-        // 一条连接承载所有客户端流量，按连接限流会把整片流量误判成单客户端超速。
+        // 后端**默认不限流**：它看到的连接是网关的复用连接，一条连接承载所有客户端
+        // 流量，按连接限流会把整片流量误判成单客户端超速。
         // 客户端准入限流在网关按真实客户端连接做（见 gateway_main.cpp）。
-        // 只有在后端被直接访问（无网关）时，才通过 --rate-limit 打开。
-        (void)config;
-        const double rate_capacity = 0.0;
-        const double rate_refill_per_sec = 0.0;
+        // 仅当后端被"直连部署"时，用 --backend-rate-limit=N 显式打开。
+        // 只有显式 --backend-rate-limit=N 才生效；默认 0 = 不限流。
+        const double rate_refill_per_sec = static_cast<double>(config.backend_rate_limit_per_sec);
+        const double rate_capacity = (config.backend_rate_limit_per_sec > 0)
+            ? static_cast<double>(config.rate_limit_burst)
+            : 0.0;
 
         auto conn = std::make_shared<Connection>(fd, std::make_unique<Channel>(fd), loop,
             std::make_unique<MyProtocol>(),
@@ -192,8 +194,7 @@ int main(int argc, char* argv[]) try
         try
         {
             const auto request = std::any_cast<MyMessage>(message);
-
-            // 网关健康探测仍使用原有处理逻辑
+            
             if (request.type_ == MyType::HEARTBEAT_REQ)
             {
                 // 序列化在业务线程完成，IO 线程只负责搬字节（见 Connection::sendRaw）
@@ -219,8 +220,9 @@ int main(int argc, char* argv[]) try
             // 以连接 fd 作为客户端标识，用于公平调度与按客户端配额。
             const int clientId = conn->getChannel()->getFd();
 
-            // 每连接令牌桶限流：放在业务层（work 线程）而不是 IO 线程，
-            // 这样限流逻辑不会占用 IO 线程；超限直接回错误码，不占引擎队列。
+            // 每连接令牌桶：只有 --backend-rate-limit>0（直连后端部署）时才可能拒绝；
+            // 经网关时容量为 0，allowRequest() 立即返回 true，这个分支不会触发。
+            // 放业务线程而不是 IO 线程，是为了不让限流逻辑占用 IO 线程。
             if (!conn->allowRequest())
             {
                 Metrics::conn_rejected_rate_limited.fetch_add(1, std::memory_order_relaxed);

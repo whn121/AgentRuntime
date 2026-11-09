@@ -1,12 +1,12 @@
-runtime_engine 1 0.017232
-scheduler 1 0.00150422
-task_model 1 0.00124794
-worker 1 0.0011695
-close_drain 1 0.102021
-scheduler_fairness 1 0.00183976
-runtime_cancel 1 0.0518993
-cancel_by_client_e2e 1 0.403407
-protocol 1 0.00227777
-stop_escalation 1 0.00616645
-token_bucket 1 0.00206246
+runtime_engine 3 0.00593095
+scheduler 3 0.000638717
+task_model 3 0.000435047
+worker 3 0.000423425
+close_drain 3 0.0340225
+scheduler_fairness 3 0.000712057
+runtime_cancel 3 0.017332
+cancel_by_client_e2e 3 0.134565
+protocol 3 0.000922965
+stop_escalation 3 0.00240201
+token_bucket 3 0.000610339
 ---
