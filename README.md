@@ -29,6 +29,15 @@ C++17 实现的推理任务运行时：在 Reactor 网络底座上构建 Gateway
 - **网关**：Redis 服务注册发现（TTL 10s，心跳 3s），轮询负载均衡，请求 ID 重写 + pending 表关联，心跳与健康检查，超时清理。
 - **调度**：`Scheduler` 按客户端轮转 + 单客户端配额 256，避免一个连接独占队列；`RuntimeEngine` 有界待调度队列（默认 1024）。
 - **取消**：`RuntimeEngine::stop()` 通过 `CancellationToken` 传播至 `LlamaClient`，基于 libcurl `XFERINFOFUNCTION` **周期性**检查。注意延迟的**上界是一个进度回调周期（约 1 秒）**，实测一次 108ms 属于恰好接近回调时刻，不能当作普遍值。客户端断开时，**所有关闭路径**（`close()` / 读错误 / 写错误 / 协议错误 / `forceCloseOnLoopStop`）统一在 `handleClose` 的 CAS 成功后通过 `notifyCancelOnce()` 触发一次 `cancelHook_`，使用不可变的 `clientId_`（构造时的 fd），不依赖 `finishClose` 之后的 `afd_`。
+- **任务持久化（MySQL，可选）**：Agent 任务可能跑几十秒，客户端断开后结果就丢了。
+  现在终态（成功/失败/取消）异步落到 `agent_task` 表，客户端重连后可按 `request_id` 查结果（幂等）。
+  - **表**：`PRIMARY KEY(request_id)` 做幂等键，`KEY idx_client_time(client_id, created_at)` 支撑"查我的历史"；
+  - **异步写**：引擎线程只入队（`TaskStore::SubmitTerminal`），写库由独立写线程做，**不拖慢任务完成通知**；
+    队列上限 4096，满了丢弃并计数——DB 是旁路，不能反过来打挂主链路；
+  - **降级**：`--mysql-host` 为空或连不上就打印一行、关闭该能力，服务照常启动；
+  - **语义**：取消只作用于**待调度**任务，运行中的不打断，所以断开后排队任务落 `status=4 CANCELLED`；
+  - **验证**：`tests/e2e_persist.py` 四个用例（正常完成/重连查询、排队任务被取消、查不到返回 NOT_FOUND）。
+
 - **准入限流**：每连接令牌桶（容量 200、补充 100/s），超限直接回 `RUNTIME_TASK_FAILED + "RATE_LIMITED"`。限流点在**业务线程**的 handler 里，不占 IO 线程、也不占 `RuntimeEngine` 队列。用令牌桶而不是固定窗口，是为了避免窗口交界处放过 2N 个请求。
 - **关闭路径**：统一 `closeCallbackPending_` 认领入口，停服时连接清理恰好一次；`EventLoop` 退出时对残余连接强制关闭兜底；对单连接回调异常隔离，防止 `bad_alloc` 拖垮进程。支持 `GRACEFUL`（取消在途任务，pending 继续执行）和 `FORCE`（额外清空 pending 队列）两种关闭模式。
 - **可观测性**：新增 9 个运行时指标（队列深度、拒绝原因、活跃任务数、发送队列峰值），叠加原有连接/请求/字节计数器和 Connection 构造/析构计数；发送侧软背压 8MB/2MB 双水位，64MB 硬水位兜底。

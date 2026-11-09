@@ -33,6 +33,8 @@ set(SRC_CORE
     src/Common/Config.cpp
     src/Protocol/MyProtocol.cpp
     src/DB/RedisPool.cpp
+    src/DB/MySQLPool.cpp
+    src/Runtime/TaskStore.cpp
     src/Logger/AsyncLogger.cpp
     src/Metrics/Metrics.cpp
     src/Gateway/ServiceRegistry.cpp
@@ -50,8 +52,15 @@ find_library(HIREDIS_LIBRARY NAMES hiredis)
 if(NOT HIREDIS_INCLUDE_DIR OR NOT HIREDIS_LIBRARY)
     message(FATAL_ERROR "hiredis development headers/library are required (libhiredis-dev)")
 endif()
-target_include_directories(agentruntime_core PUBLIC ${HIREDIS_INCLUDE_DIR})
-target_link_libraries(agentruntime_core PUBLIC ${HIREDIS_LIBRARY} Threads::Threads)
+
+# MySQL 客户端（任务持久化用）。没装就直接编译失败，别留到运行期才发现。
+find_path(MYSQL_INCLUDE_DIR mysql/mysql.h)
+find_library(MYSQL_LIBRARY NAMES mysqlclient)
+if(NOT MYSQL_INCLUDE_DIR OR NOT MYSQL_LIBRARY)
+    message(FATAL_ERROR "MySQL client development files are required (libmysqlclient-dev)")
+endif()
+target_include_directories(agentruntime_core PUBLIC ${HIREDIS_INCLUDE_DIR} ${MYSQL_INCLUDE_DIR})
+target_link_libraries(agentruntime_core PUBLIC ${HIREDIS_LIBRARY} ${MYSQL_LIBRARY} Threads::Threads)
 target_compile_options(agentruntime_core PRIVATE -Wall -Wextra -Wpedantic)
 
 # ═══════ AgentRuntimeGateway 可执行文件 ═══════

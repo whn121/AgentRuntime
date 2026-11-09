@@ -1,5 +1,7 @@
 #include "Common/Config.h"
 #include "DB/RedisPool.h"
+#include "DB/MySQLPool.h"
+#include "Runtime/TaskStore.h"
 #include "Net/Connection.h"
 #include "Protocol/MyProtocol.h"
 #include "Reactor/Channel.h"
@@ -146,6 +148,38 @@ int main(int argc, char* argv[]) try
     config.port = 9001;
     config.parseArgs(argc, argv);
 
+    // ── 任务持久化（可选旁路）──
+    // 设计原则：DB 不在主链路的关键路径上，也不该成为启动前提。
+    // 连不上就打印一行日志、关闭该能力，服务照常启动。
+    std::shared_ptr<db::MySQLPool> mysql_pool;
+    std::shared_ptr<store::TaskStore> task_store;
+    if (!config.mysql_host.empty())
+    {
+        mysql_pool = std::make_shared<db::MySQLPool>(config.mysql_host, config.mysql_port,
+            config.mysql_user, config.mysql_password, config.mysql_db, 2);
+
+        if (!mysql_pool->Valid())
+        {
+            std::cerr << "[Backend] task persistence disabled: " << mysql_pool->Error() << '\n';
+            mysql_pool.reset();
+        }
+        else
+        {
+            task_store = std::make_shared<store::TaskStore>(mysql_pool);
+            if (!task_store->Ready())
+            {
+                std::cerr << "[Backend] task persistence disabled: " << task_store->Error() << '\n';
+                task_store.reset();
+            }
+            else
+            {
+                std::cerr << "[Backend] task persistence enabled: " << config.mysql_host << ':'
+                          << config.mysql_port << '/' << config.mysql_db
+                          << " (async write + idempotent query)\n";
+            }
+        }
+    }
+
     auto llamaClient = std::make_shared<runtime::LlamaClient>();
 
     runtime::RuntimeEngine runtimeEngine([llamaClient]
@@ -191,7 +225,7 @@ int main(int argc, char* argv[]) try
         runtimeEngine.stop(mode, std::chrono::milliseconds(config.shutdown_deadline_ms));
     });
 
-    server.setBusinessHandler([&runtimeEngine](std::shared_ptr<Connection> conn, const std::any& message) 
+    server.setBusinessHandler([&runtimeEngine, task_store](std::shared_ptr<Connection> conn, const std::any& message) 
     {
         try
         {
@@ -202,6 +236,33 @@ int main(int argc, char* argv[]) try
                 // 序列化在业务线程完成，IO 线程只负责搬字节（见 Connection::sendRaw）
                 conn->sendRaw(MyProtocol::encodeMessage(
                     MyType::HEARTBEAT_RESP, request.id_, request.payload_));
+                return;
+            }
+
+            // 幂等查询：客户端断开重连后按 request_id 查结果。
+            // 同步 DB 读，但发生在业务线程（不在 IO 线程），也不占引擎队列。
+            if (request.type_ == MyType::TASK_QUERY_REQ)
+            {
+                if (!task_store)
+                {
+                    conn->sendRaw(MyProtocol::encodeMessage(
+                        MyType::TASK_QUERY_RESP, request.id_, "DB_DISABLED"));
+                    return;
+                }
+
+                uint32_t qid = 0;
+                try { qid = static_cast<uint32_t>(std::stoul(request.payload_)); }
+                catch (...) { qid = 0; }
+
+                store::TaskRecord rec;
+                std::string body = "NOT_FOUND";
+                if (qid != 0 && task_store->Query(qid, rec))
+                {
+                    body = "OK " + std::to_string(static_cast<int>(rec.status)) + " " + rec.result;
+                }
+
+                conn->sendRaw(MyProtocol::encodeMessage(
+                    MyType::TASK_QUERY_RESP, request.id_, body));
                 return;
             }
 
@@ -227,7 +288,7 @@ int main(int argc, char* argv[]) try
             // 按连接限流会把整片流量误判成"单客户端超速"——压测实测：50 客户端
             // 10 秒只有 630 个成功（= 3 条后端连接 × 210）。
             // 客户端准入限流只在网关做（见 gateway_main.cpp），维度才对。
-            const bool accepted = runtimeEngine.submit(clientId, input, [conn, requestId]
+            const bool accepted = runtimeEngine.submit(clientId, input, [conn, requestId, clientId, task_store]
                 (const std::shared_ptr<runtime::RuntimeTask>& task, runtime::WorkerExecutionResult result)
             {
                 // 关闭期间连接可能已经进了 Closing, sendResponse 会静默丢掉
@@ -239,6 +300,14 @@ int main(int argc, char* argv[]) try
                     // encode 在这里做，IO 线程只收字节
                     conn->sendRaw(MyProtocol::encodeMessage(
                         MyType::RUNTIME_TASK_RESP, requestId, task->result()));
+
+                    // 终态落库：这里只入队，真正的写由 TaskStore 的写线程做。
+                    // 引擎线程不能被一次 DB 写拖住。
+                    if (task_store)
+                    {
+                        task_store->SubmitTerminal(requestId, clientId,
+                            store::TaskStatus::Succeeded, task->result(), "");
+                    }
                 }
                 else
                 {
@@ -246,6 +315,14 @@ int main(int argc, char* argv[]) try
 
                     conn->sendRaw(MyProtocol::encodeMessage(
                         MyType::RUNTIME_TASK_FAILED, requestId, error));
+
+                    if (task_store)
+                    {
+                        const auto st = (error == "CLIENT_DISCONNECTED")
+                            ? store::TaskStatus::Cancelled
+                            : store::TaskStatus::Failed;
+                        task_store->SubmitTerminal(requestId, clientId, st, "", error);
+                    }
                 }
             });
 
@@ -253,6 +330,12 @@ int main(int argc, char* argv[]) try
             {
                 conn->sendRaw(MyProtocol::encodeMessage(
                     MyType::RUNTIME_TASK_FAILED, requestId, "TASK_SUBMISSION_FAILED"));
+
+                if (task_store)
+                {
+                    task_store->SubmitTerminal(requestId, clientId,
+                        store::TaskStatus::Failed, "", "TASK_SUBMISSION_FAILED");
+                }
             }
         }
         catch (const std::bad_any_cast&)

@@ -1,0 +1,218 @@
+[
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Net/Socket.cpp.o -c /home/whn/AgentRuntime/src/Net/Socket.cpp",
+  "file": "/home/whn/AgentRuntime/src/Net/Socket.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/Net/Socket.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Net/Connection.cpp.o -c /home/whn/AgentRuntime/src/Net/Connection.cpp",
+  "file": "/home/whn/AgentRuntime/src/Net/Connection.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/Net/Connection.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Net/Buffer.cpp.o -c /home/whn/AgentRuntime/src/Net/Buffer.cpp",
+  "file": "/home/whn/AgentRuntime/src/Net/Buffer.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/Net/Buffer.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/ThreadPool/TaskQueue.cpp.o -c /home/whn/AgentRuntime/src/ThreadPool/TaskQueue.cpp",
+  "file": "/home/whn/AgentRuntime/src/ThreadPool/TaskQueue.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/ThreadPool/TaskQueue.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/ThreadPool/WorkThreadPool.cpp.o -c /home/whn/AgentRuntime/src/ThreadPool/WorkThreadPool.cpp",
+  "file": "/home/whn/AgentRuntime/src/ThreadPool/WorkThreadPool.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/ThreadPool/WorkThreadPool.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/ThreadPool/IoThreadPool.cpp.o -c /home/whn/AgentRuntime/src/ThreadPool/IoThreadPool.cpp",
+  "file": "/home/whn/AgentRuntime/src/ThreadPool/IoThreadPool.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/ThreadPool/IoThreadPool.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Reactor/Channel.cpp.o -c /home/whn/AgentRuntime/src/Reactor/Channel.cpp",
+  "file": "/home/whn/AgentRuntime/src/Reactor/Channel.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/Reactor/Channel.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Reactor/EventLoop.cpp.o -c /home/whn/AgentRuntime/src/Reactor/EventLoop.cpp",
+  "file": "/home/whn/AgentRuntime/src/Reactor/EventLoop.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/Reactor/EventLoop.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Reactor/Acceptor.cpp.o -c /home/whn/AgentRuntime/src/Reactor/Acceptor.cpp",
+  "file": "/home/whn/AgentRuntime/src/Reactor/Acceptor.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/Reactor/Acceptor.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Server/Server.cpp.o -c /home/whn/AgentRuntime/src/Server/Server.cpp",
+  "file": "/home/whn/AgentRuntime/src/Server/Server.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/Server/Server.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Common/Config.cpp.o -c /home/whn/AgentRuntime/src/Common/Config.cpp",
+  "file": "/home/whn/AgentRuntime/src/Common/Config.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/Common/Config.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Protocol/MyProtocol.cpp.o -c /home/whn/AgentRuntime/src/Protocol/MyProtocol.cpp",
+  "file": "/home/whn/AgentRuntime/src/Protocol/MyProtocol.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/Protocol/MyProtocol.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/DB/RedisPool.cpp.o -c /home/whn/AgentRuntime/src/DB/RedisPool.cpp",
+  "file": "/home/whn/AgentRuntime/src/DB/RedisPool.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/DB/RedisPool.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/DB/MySQLPool.cpp.o -c /home/whn/AgentRuntime/src/DB/MySQLPool.cpp",
+  "file": "/home/whn/AgentRuntime/src/DB/MySQLPool.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/DB/MySQLPool.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Runtime/TaskStore.cpp.o -c /home/whn/AgentRuntime/src/Runtime/TaskStore.cpp",
+  "file": "/home/whn/AgentRuntime/src/Runtime/TaskStore.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/Runtime/TaskStore.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Logger/AsyncLogger.cpp.o -c /home/whn/AgentRuntime/src/Logger/AsyncLogger.cpp",
+  "file": "/home/whn/AgentRuntime/src/Logger/AsyncLogger.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/Logger/AsyncLogger.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Metrics/Metrics.cpp.o -c /home/whn/AgentRuntime/src/Metrics/Metrics.cpp",
+  "file": "/home/whn/AgentRuntime/src/Metrics/Metrics.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/Metrics/Metrics.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Gateway/ServiceRegistry.cpp.o -c /home/whn/AgentRuntime/src/Gateway/ServiceRegistry.cpp",
+  "file": "/home/whn/AgentRuntime/src/Gateway/ServiceRegistry.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/Gateway/ServiceRegistry.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Runtime/RuntimeTask.cpp.o -c /home/whn/AgentRuntime/src/Runtime/RuntimeTask.cpp",
+  "file": "/home/whn/AgentRuntime/src/Runtime/RuntimeTask.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/Runtime/RuntimeTask.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Runtime/Scheduler.cpp.o -c /home/whn/AgentRuntime/src/Runtime/Scheduler.cpp",
+  "file": "/home/whn/AgentRuntime/src/Runtime/Scheduler.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/Runtime/Scheduler.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Runtime/Worker.cpp.o -c /home/whn/AgentRuntime/src/Runtime/Worker.cpp",
+  "file": "/home/whn/AgentRuntime/src/Runtime/Worker.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/Runtime/Worker.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_core.dir/src/Runtime/RuntimeEngine.cpp.o -c /home/whn/AgentRuntime/src/Runtime/RuntimeEngine.cpp",
+  "file": "/home/whn/AgentRuntime/src/Runtime/RuntimeEngine.cpp",
+  "output": "CMakeFiles/agentruntime_core.dir/src/Runtime/RuntimeEngine.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/AgentRuntimeGateway.dir/src/gateway_main.cpp.o -c /home/whn/AgentRuntime/src/gateway_main.cpp",
+  "file": "/home/whn/AgentRuntime/src/gateway_main.cpp",
+  "output": "CMakeFiles/AgentRuntimeGateway.dir/src/gateway_main.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/AgentRuntimeBackend.dir/src/backend_main.cpp.o -c /home/whn/AgentRuntime/src/backend_main.cpp",
+  "file": "/home/whn/AgentRuntime/src/backend_main.cpp",
+  "output": "CMakeFiles/AgentRuntimeBackend.dir/src/backend_main.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/AgentRuntimeBackend.dir/src/Runtime/LlamaClient.cpp.o -c /home/whn/AgentRuntime/src/Runtime/LlamaClient.cpp",
+  "file": "/home/whn/AgentRuntime/src/Runtime/LlamaClient.cpp",
+  "output": "CMakeFiles/AgentRuntimeBackend.dir/src/Runtime/LlamaClient.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -UNDEBUG -o CMakeFiles/test_runtime_engine.dir/tests/test_runtime_engine.cpp.o -c /home/whn/AgentRuntime/tests/test_runtime_engine.cpp",
+  "file": "/home/whn/AgentRuntime/tests/test_runtime_engine.cpp",
+  "output": "CMakeFiles/test_runtime_engine.dir/tests/test_runtime_engine.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -UNDEBUG -o CMakeFiles/test_scheduler.dir/tests/test_scheduler.cpp.o -c /home/whn/AgentRuntime/tests/test_scheduler.cpp",
+  "file": "/home/whn/AgentRuntime/tests/test_scheduler.cpp",
+  "output": "CMakeFiles/test_scheduler.dir/tests/test_scheduler.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -UNDEBUG -o CMakeFiles/test_task_model.dir/tests/test_task_model.cpp.o -c /home/whn/AgentRuntime/tests/test_task_model.cpp",
+  "file": "/home/whn/AgentRuntime/tests/test_task_model.cpp",
+  "output": "CMakeFiles/test_task_model.dir/tests/test_task_model.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -UNDEBUG -o CMakeFiles/test_worker.dir/tests/test_worker.cpp.o -c /home/whn/AgentRuntime/tests/test_worker.cpp",
+  "file": "/home/whn/AgentRuntime/tests/test_worker.cpp",
+  "output": "CMakeFiles/test_worker.dir/tests/test_worker.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -UNDEBUG -o CMakeFiles/test_close_drain.dir/tests/test_close_drain.cpp.o -c /home/whn/AgentRuntime/tests/test_close_drain.cpp",
+  "file": "/home/whn/AgentRuntime/tests/test_close_drain.cpp",
+  "output": "CMakeFiles/test_close_drain.dir/tests/test_close_drain.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -UNDEBUG -o CMakeFiles/test_scheduler_fairness.dir/tests/test_scheduler_fairness.cpp.o -c /home/whn/AgentRuntime/tests/test_scheduler_fairness.cpp",
+  "file": "/home/whn/AgentRuntime/tests/test_scheduler_fairness.cpp",
+  "output": "CMakeFiles/test_scheduler_fairness.dir/tests/test_scheduler_fairness.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -UNDEBUG -o CMakeFiles/test_runtime_cancel.dir/tests/test_runtime_cancel.cpp.o -c /home/whn/AgentRuntime/tests/test_runtime_cancel.cpp",
+  "file": "/home/whn/AgentRuntime/tests/test_runtime_cancel.cpp",
+  "output": "CMakeFiles/test_runtime_cancel.dir/tests/test_runtime_cancel.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -UNDEBUG -o CMakeFiles/test_cancel_by_client_e2e.dir/tests/test_cancel_by_client_e2e.cpp.o -c /home/whn/AgentRuntime/tests/test_cancel_by_client_e2e.cpp",
+  "file": "/home/whn/AgentRuntime/tests/test_cancel_by_client_e2e.cpp",
+  "output": "CMakeFiles/test_cancel_by_client_e2e.dir/tests/test_cancel_by_client_e2e.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -UNDEBUG -o CMakeFiles/test_protocol.dir/tests/test_protocol.cpp.o -c /home/whn/AgentRuntime/tests/test_protocol.cpp",
+  "file": "/home/whn/AgentRuntime/tests/test_protocol.cpp",
+  "output": "CMakeFiles/test_protocol.dir/tests/test_protocol.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -UNDEBUG -o CMakeFiles/test_stop_escalation.dir/tests/test_stop_escalation.cpp.o -c /home/whn/AgentRuntime/tests/test_stop_escalation.cpp",
+  "file": "/home/whn/AgentRuntime/tests/test_stop_escalation.cpp",
+  "output": "CMakeFiles/test_stop_escalation.dir/tests/test_stop_escalation.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/test_token_bucket.dir/tests/test_token_bucket.cpp.o -c /home/whn/AgentRuntime/tests/test_token_bucket.cpp",
+  "file": "/home/whn/AgentRuntime/tests/test_token_bucket.cpp",
+  "output": "CMakeFiles/test_token_bucket.dir/tests/test_token_bucket.cpp.o"
+}
+]

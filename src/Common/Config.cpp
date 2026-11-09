@@ -30,6 +30,11 @@ void Config::parseArgs(int argc, char* argv[])
         {"bind-host",  required_argument, 0, 'b'},
         {"redis-host", required_argument, 0, 'r'},
         {"redis-port", required_argument, 0, 'R'},
+        {"mysql-host", required_argument, 0, 'H'},
+        {"mysql-port", required_argument, 0, 'P'},
+        {"mysql-user", required_argument, 0, 'U'},
+        {"mysql-password", required_argument, 0, 'W'},
+        {"mysql-db", required_argument, 0, 'N'},
         {"help",       no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
@@ -49,7 +54,7 @@ void Config::parseArgs(int argc, char* argv[])
     optind = 1;
     int opt;
     // 循环解析参数，直到返回 -1
-    while ((opt = getopt_long(argc, argv, "p:i:w:E:B:L:G:T:S:D:b:r:R:h", long_options, nullptr)) != -1)
+    while ((opt = getopt_long(argc, argv, "p:i:w:E:B:L:G:T:S:D:b:r:R:H:P:U:W:N:h", long_options, nullptr)) != -1)
     {
         switch (opt) 
         {
@@ -70,6 +75,11 @@ void Config::parseArgs(int argc, char* argv[])
             case 'b': bind_host = optarg; break;
             case 'r': redis_host = optarg; break;
             case 'R': redis_port = static_cast<uint16_t>(number(optarg, 65535)); break;
+            case 'H': mysql_host = optarg; break;
+            case 'P': mysql_port = static_cast<uint16_t>(number(optarg, 65535)); break;
+            case 'U': mysql_user = optarg; break;
+            case 'W': mysql_password = optarg; break;
+            case 'N': mysql_db = optarg; break;
             case 'h':
                 std::cout
                     << "Usage: AgentRuntime [options]\n"
@@ -85,7 +95,12 @@ void Config::parseArgs(int argc, char* argv[])
                     << "  --shutdown-deadline-ms=N  graceful 模式最长等待 (default 10000)\n"
                     << "  --bind-host=HOST  address registered to Redis (default 127.0.0.1)\n"
                     << "  --redis-host=HOST Redis host (default 127.0.0.1)\n"
-                    << "  --redis-port=N    Redis port (default 6379)\n";
+                    << "  --redis-port=N    Redis port (default 6379)\n"
+                    << "  --mysql-host=H    MySQL host; empty = 任务持久化关闭 (default 关闭)\n"
+                    << "  --mysql-port=N    MySQL port (default 3306)\n"
+                    << "  --mysql-user=U    MySQL user (default agent)\n"
+                    << "  --mysql-password=P MySQL password (default 空)\n"
+                    << "  --mysql-db=DB     MySQL database (default agent_runtime)\n";
                 exit(0);
             default:
                 throw std::invalid_argument("unknown option or missing argument");

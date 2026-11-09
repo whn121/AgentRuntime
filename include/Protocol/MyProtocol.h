@@ -17,7 +17,12 @@ enum class MyType : uint16_t
     ERROR_RESP     = 0x03,    // 网关 -> 客户端，超时 / 无可用后端
     RUNTIME_TASK_REQ    = 0x04,   
     RUNTIME_TASK_RESP   = 0x05,
-    RUNTIME_TASK_FAILED = 0x06   //runtime执行失败
+    RUNTIME_TASK_FAILED = 0x06,   //runtime执行失败
+
+    // 幂等查询：客户端断开重连后，按 request_id 查任务结果。
+    // payload = 十进制 request_id；RESP payload = "OK <status> <result>" / "NOT_FOUND"
+    TASK_QUERY_REQ  = 0x07,
+    TASK_QUERY_RESP = 0x08
 };
 
 struct MyMessage

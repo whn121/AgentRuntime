@@ -39,6 +39,14 @@ struct Config
     std::string redis_host = "127.0.0.1";
     uint16_t redis_port = 6379;
 
+    // 任务持久化（MySQL）。mysql_host 为空表示关闭。
+    // 默认关闭：DB 是旁路能力，不该成为启动的前提条件。
+    std::string mysql_host;
+    uint16_t mysql_port = 3306;
+    std::string mysql_user = "agent";
+    std::string mysql_password;
+    std::string mysql_db = "agent_runtime";
+
     // 停服模式：graceful（drain + deadline，默认）| force（全丢）
     // shutdown_deadline_ms 是 graceful 模式下"等任务自然完成"的最长时间。
     std::string shutdown_mode = "graceful";
