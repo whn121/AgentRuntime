@@ -29,6 +29,16 @@ C++17 实现的推理任务运行时：在 Reactor 网络底座上构建 Gateway
 - **网关**：Redis 服务注册发现（TTL 10s，心跳 3s），轮询负载均衡，请求 ID 重写 + pending 表关联，心跳与健康检查，超时清理。
 - **调度**：`Scheduler` 按客户端轮转 + 单客户端配额 256，避免一个连接独占队列；`RuntimeEngine` 有界待调度队列（默认 1024）。
 - **取消**：`RuntimeEngine::stop()` 通过 `CancellationToken` 传播至 `LlamaClient`，基于 libcurl `XFERINFOFUNCTION` **周期性**检查。注意延迟的**上界是一个进度回调周期（约 1 秒）**，实测一次 108ms 属于恰好接近回调时刻，不能当作普遍值。客户端断开时，**所有关闭路径**（`close()` / 读错误 / 写错误 / 协议错误 / `forceCloseOnLoopStop`）统一在 `handleClose` 的 CAS 成功后通过 `notifyCancelOnce()` 触发一次 `cancelHook_`，使用不可变的 `clientId_`（构造时的 fd），不依赖 `finishClose` 之后的 `afd_`。
+- **存储子系统补强（会话/事务/索引/缓存/幂等）**：把"落库"升级成能讲 DB 深度的子系统
+  - **会话表 + 事务**：`agent_session.task_count` 与任务插入在**同一事务**（`TryClaim`），
+    避免"任务存在但计数丢失"；不需要分布式事务，因为两表同库。
+  - **索引实验**（`tools/index_bench.cpp`）：10 万行下 `WHERE client_id=? AND created_at>?`，
+    EXPLAIN 扫描行数 **100000 → 1**，平均延迟 **10.87ms → 0.274ms（-97.5%）**。
+  - **缓存一致性**：cache-aside——先更库、再删缓存；未命中回填 TTL 60s，
+    **空结果也缓存**（TTL 10s）防穿透。实测同一 id 二次查询 **1.06ms → 0.28ms**。
+  - **幂等**：`--db-dedup` 提交前 `TryClaim`（唯一键占位，业务线程 ~0.2ms），
+    重复提交返回 `DUPLICATE_REQUEST`；实测第二次提交被拒、`task_count` 只 +1。
+
 - **任务持久化（MySQL，可选）**：Agent 任务可能跑几十秒，客户端断开后结果就丢了。
   现在终态（成功/失败/取消）异步落到 `agent_task` 表，客户端重连后可按 `request_id` 查结果（幂等）。
   - **表**：`PRIMARY KEY(request_id)` 做幂等键，`KEY idx_client_time(client_id, created_at)` 支撑"查我的历史"；

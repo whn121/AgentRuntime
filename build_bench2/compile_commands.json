@@ -145,6 +145,12 @@
 },
 {
   "directory": "/home/whn/AgentRuntime/build_bench2",
+  "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/agentruntime_index_bench.dir/tools/index_bench.cpp.o -c /home/whn/AgentRuntime/tools/index_bench.cpp",
+  "file": "/home/whn/AgentRuntime/tools/index_bench.cpp",
+  "output": "CMakeFiles/agentruntime_index_bench.dir/tools/index_bench.cpp.o"
+},
+{
+  "directory": "/home/whn/AgentRuntime/build_bench2",
   "command": "/usr/bin/c++  -I/home/whn/AgentRuntime/include -O3 -DNDEBUG -std=gnu++17 -Wall -Wextra -Wpedantic -o CMakeFiles/AgentRuntimeBackend.dir/src/backend_main.cpp.o -c /home/whn/AgentRuntime/src/backend_main.cpp",
   "file": "/home/whn/AgentRuntime/src/backend_main.cpp",
   "output": "CMakeFiles/AgentRuntimeBackend.dir/src/backend_main.cpp.o"

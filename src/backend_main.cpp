@@ -166,7 +166,9 @@ int main(int argc, char* argv[]) try
         }
         else
         {
-            task_store = std::make_shared<store::TaskStore>(mysql_pool);
+            // 任务状态缓存（cache-aside）复用 Redis：先更库、再删缓存
+            auto redis_pool = std::make_shared<RedisPool>(config.redis_host, config.redis_port, 2);
+            task_store = std::make_shared<store::TaskStore>(mysql_pool, redis_pool);
             if (!task_store->Ready())
             {
                 std::cerr << "[Backend] task persistence disabled: " << task_store->Error() << '\n';
@@ -299,6 +301,16 @@ int main(int argc, char* argv[]) try
             // 用逻辑 clientId（不是 fd）：fd 会被内核复用，不能当身份。
             const auto clientId = conn->clientId();
 
+            // 幂等受理（可选）：同一 request_id 只受理一次。
+            // 一次 INSERT 占位在业务线程完成（~0.2ms），不进引擎队列。
+            if (config.db_dedup && task_store &&
+                !task_store->TryClaim(requestId, clientId, clientId))
+            {
+                conn->sendRaw(MyProtocol::encodeMessage(
+                    MyType::RUNTIME_TASK_FAILED, requestId, "DUPLICATE_REQUEST"));
+                return;
+            }
+
             // 查询令牌：在业务线程（work 池）算，不占 IO 线程。
             // 客户端拿它来证明"这个 request_id 是我的"——没有它，知道 id 就能查别人结果。
             // 用 HMAC 而不是随机数：服务端不用存 token 表，验签时重算一次即可（无状态）。
@@ -331,7 +343,7 @@ int main(int argc, char* argv[]) try
                     // 引擎线程不能被一次 DB 写拖住。
                     if (task_store)
                     {
-                        task_store->SubmitTerminal(requestId, clientId,
+                        task_store->SubmitTerminal(requestId, clientId, clientId,
                             store::TaskStatus::Succeeded, task->result(), "");
                     }
                 }
@@ -350,7 +362,7 @@ int main(int argc, char* argv[]) try
                         const auto st = (error == "CLIENT_DISCONNECTED")
                             ? store::TaskStatus::Cancelled
                             : store::TaskStatus::Failed;
-                        task_store->SubmitTerminal(requestId, clientId, st, "", error);
+                        task_store->SubmitTerminal(requestId, clientId, clientId, st, "", error);
                     }
                 }
             });
@@ -370,7 +382,7 @@ int main(int argc, char* argv[]) try
 
                 if (task_store)
                 {
-                    task_store->SubmitTerminal(requestId, clientId,
+                    task_store->SubmitTerminal(requestId, clientId, clientId,
                         store::TaskStatus::Failed, "", "TASK_SUBMISSION_FAILED");
                 }
             }

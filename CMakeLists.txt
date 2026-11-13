@@ -66,6 +66,11 @@ target_compile_options(agentruntime_core PRIVATE -Wall -Wextra -Wpedantic)
 
 # ═══════ AgentRuntimeGateway 可执行文件 ═══════
 add_executable(AgentRuntimeGateway src/gateway_main.cpp)
+
+# 索引实验：10 万行下 EXPLAIN 前后对比（面试"SQL 为什么慢"用）
+add_executable(agentruntime_index_bench tools/index_bench.cpp)
+target_link_libraries(agentruntime_index_bench PRIVATE agentruntime_core)
+target_compile_options(agentruntime_index_bench PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(AgentRuntimeGateway PRIVATE agentruntime_core)
 target_compile_options(AgentRuntimeGateway PRIVATE -Wall -Wextra -Wpedantic)
 

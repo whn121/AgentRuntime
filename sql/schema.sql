@@ -14,6 +14,7 @@
 
 CREATE TABLE IF NOT EXISTS agent_task (
     request_id BIGINT UNSIGNED NOT NULL,
+    session_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
     client_id  BIGINT UNSIGNED NOT NULL,
     status     TINYINT NOT NULL,
     result     MEDIUMTEXT NULL,
@@ -22,4 +23,16 @@ CREATE TABLE IF NOT EXISTS agent_task (
     updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (request_id),
     KEY idx_client_time (client_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+-- 会话表：和任务插入在同一事务里更新 task_count，
+-- 演示"两个写操作的原子性"，也支撑"某会话最近的任务"查询。
+CREATE TABLE IF NOT EXISTS agent_session (
+    session_id BIGINT UNSIGNED NOT NULL,
+    client_id  BIGINT UNSIGNED NOT NULL,
+    task_count INT NOT NULL DEFAULT 0,
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (session_id),
+    KEY idx_client_time (client_id, updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

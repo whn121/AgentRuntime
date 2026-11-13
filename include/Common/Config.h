@@ -51,6 +51,9 @@ struct Config
     // 启用后：提交返回 token，查询必须带 token，防止"知道 request_id 就能查别人结果"。
     std::string query_secret;
 
+    // 提交前去重：同一 request_id 只受理一次（一次 INSERT 占位，业务线程完成）
+    bool db_dedup = false;
+
     // 停服模式：graceful（drain + deadline，默认）| force（全丢）
     // shutdown_deadline_ms 是 graceful 模式下"等任务自然完成"的最长时间。
     std::string shutdown_mode = "graceful";
