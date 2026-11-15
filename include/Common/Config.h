@@ -54,6 +54,9 @@ struct Config
     // 提交前去重：同一 request_id 只受理一次（一次 INSERT 占位，业务线程完成）
     bool db_dedup = false;
 
+    // 停服前等待服务发现收敛的时间（0 = 不等待，直接 drain）
+    int deregister_wait_ms = 2000;
+
     // 停服模式：graceful（drain + deadline，默认）| force（全丢）
     // shutdown_deadline_ms 是 graceful 模式下"等任务自然完成"的最长时间。
     std::string shutdown_mode = "graceful";

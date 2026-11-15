@@ -37,6 +37,7 @@ void Config::parseArgs(int argc, char* argv[])
         {"mysql-db", required_argument, 0, 'N'},
         {"query-secret", required_argument, 0, 'K'},
         {"db-dedup", no_argument, 0, 'J'},
+        {"deregister-wait-ms", required_argument, 0, 'I'},
         {"help",       no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
@@ -56,7 +57,7 @@ void Config::parseArgs(int argc, char* argv[])
     optind = 1;
     int opt;
     // 循环解析参数，直到返回 -1
-    while ((opt = getopt_long(argc, argv, "p:i:w:E:B:L:G:T:S:D:b:r:R:H:P:U:W:N:K:Jh", long_options, nullptr)) != -1)
+    while ((opt = getopt_long(argc, argv, "p:i:w:E:B:L:G:T:S:D:b:r:R:H:P:U:W:N:K:J:I:h", long_options, nullptr)) != -1)
     {
         switch (opt) 
         {
@@ -84,6 +85,7 @@ void Config::parseArgs(int argc, char* argv[])
             case 'N': mysql_db = optarg; break;
             case 'K': query_secret = optarg; break;
             case 'J': db_dedup = true; break;
+            case 'I': deregister_wait_ms = std::max(0, std::atoi(optarg)); break;
             case 'h':
                 std::cout
                     << "Usage: AgentRuntime [options]\n"
@@ -106,7 +108,8 @@ void Config::parseArgs(int argc, char* argv[])
                     << "  --mysql-password=P MySQL password (default 空)\n"
                     << "  --mysql-db=DB     MySQL database (default agent_runtime)\n"
                     << "  --query-secret=S  查询令牌 HMAC 密钥；空=不鉴权 (default 空)\n"
-                    << "  --db-dedup        提交前去重：同一 request_id 只受理一次\n";
+                    << "  --db-dedup        提交前去重：同一 request_id 只受理一次\n"
+                    << "  --deregister-wait-ms=N  停服前等服务发现收敛(默认 2000, 0=不等待)\n";
                 exit(0);
             default:
                 throw std::invalid_argument("unknown option or missing argument");

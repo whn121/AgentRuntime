@@ -70,6 +70,13 @@ namespace
 
         ~BackendRegistration()
         {
+            Deregister();
+        }
+
+        // 主动注销：停续租 + Lua 校验 owner 后删除租约。
+        // 幂等：重复调用直接返回。
+        void Deregister()
+        {
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 stop_ = true;
@@ -77,6 +84,7 @@ namespace
             cv_.notify_all();
             if (thread_.joinable()) thread_.join();
             if (!registered_) return;
+            registered_ = false;
             // 必须先停止续租，再以原子比较删除保护后来启动的同名实例。
             try 
             {
@@ -215,8 +223,18 @@ int main(int argc, char* argv[]) try
         return conn;
     });
 
-    server.setBeforeIoShutdownCallback([&runtimeEngine, &config]() 
+    // 停服时先用它摘掉服务发现，让网关停止转发（pre-stop 语义）
+    std::function<void()> deregister_hook;
+
+    server.setBeforeIoShutdownCallback([&runtimeEngine, &config, &deregister_hook]() 
     {
+        // 先摘流量：删租约 → 网关 2s 刷新后不再转发到本节点
+        if (deregister_hook) deregister_hook();
+        if (config.deregister_wait_ms > 0)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(config.deregister_wait_ms));
+        }
+
         // 停服模式由 --shutdown-mode 决定：
         //   graceful（默认）= drain + deadline：先不取消，等任务自然完成；
         //                    超过 --shutdown-deadline-ms 才取消剩余、标失败。
@@ -446,8 +464,10 @@ int main(int argc, char* argv[]) try
     {
         BackendRegistration registration(config.port);
         registration.start();
+        deregister_hook = [&registration]() { registration.Deregister(); };
         // 使用 Server 内置 SignalHandler；仅主线程在 start 返回后停止 Server。
         started = server.start();
+        deregister_hook = nullptr;   // registration 即将析构，防悬垂
     } // 停止并 join 续租线程，然后尽力注销；Server 和 RedisPool 仍然有效。
     server.stop();
 

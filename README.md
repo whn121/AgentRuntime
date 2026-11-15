@@ -66,7 +66,7 @@ C++17 实现的推理任务运行时：在 Reactor 网络底座上构建 Gateway
     未启用鉴权 4 个用例（向后兼容，返回 NOT_FOUND）。
 
 - **准入限流**：每连接令牌桶（容量 200、补充 100/s），超限直接回 `RUNTIME_TASK_FAILED + "RATE_LIMITED"`。限流点在**业务线程**的 handler 里，不占 IO 线程、也不占 `RuntimeEngine` 队列。用令牌桶而不是固定窗口，是为了避免窗口交界处放过 2N 个请求。
-- **关闭路径**：统一 `closeCallbackPending_` 认领入口，停服时连接清理恰好一次；`EventLoop` 退出时对残余连接强制关闭兜底；对单连接回调异常隔离，防止 `bad_alloc` 拖垮进程。支持 `GRACEFUL`（取消在途任务，pending 继续执行）和 `FORCE`（额外清空 pending 队列）两种关闭模式。
+- **关闭路径**：统一 `closeCallbackPending_` 认领入口，停服时连接清理恰好一次；`EventLoop` 退出时对残余连接强制关闭兜底；对单连接回调异常隔离，防止 `bad_alloc` 拖垮进程。两种模式：`GRACEFUL` = **drain + deadline**（先不取消，等任务自然完成，超 deadline 才取消剩余），`FORCE` = 立刻取消 + 清空 pending。停服前先做 **pre-stop 摘流量**：删除 Redis 租约并等待 `--deregister-wait-ms`（默认 2000）让网关刷新，再进入 drain——否则网关在租约过期前仍会把新请求路由到正在退出的节点（实测租约 0.2s 内删除，进程继续 drain）。
 - **可观测性**：新增 9 个运行时指标（队列深度、拒绝原因、活跃任务数、发送队列峰值），叠加原有连接/请求/字节计数器和 Connection 构造/析构计数；发送侧软背压 8MB/2MB 双水位，64MB 硬水位兜底。
 
 ## 实测数据（`bench/`，2026-11-07）
@@ -214,8 +214,13 @@ ctest --test-dir build-asan --output-on-failure
 - **EMFILE 退避是非阻塞的**：批量丢弃 64 个 + 一次性 timerfd 退避 100ms，
   不在 IO 线程里 sleep。
 
-1. **`stop(GRACEFUL)` 取消正在执行的任务，`stop(FORCE)` 额外清空 pending 队列**
-   `GRACEFUL` 下正在执行的任务会被 `cancel()`——这是有意为之：模型调用可能阻塞 120 秒，等它完成不叫“优雅关闭”，叫“关闭卡死”。`pending_queue_` 中的任务不受影响，会继续执行完毕，避免“提交成功但响应丢失”的不一致。`FORCE` 下额外调用 `Scheduler::drainAllPending()` 清空 pending 队列，每个任务 `fail("SERVER_SHUTTING_DOWN")`，`completion` 回调收到 `FAILED`。**两种模式都依赖 `executor_` 协作式响应取消令牌**——不检查令牌的第三方库，`join()` 仍会等它自然返回。
+1. **`stop(GRACEFUL)` = drain + deadline；`stop(FORCE)` = 立刻取消 + 清空 pending**
+   GRACEFUL 先不取消在途任务，等"在途 + 排队"自然完成，最多等 `--shutdown-deadline-ms`；
+   超时才取消剩余在途、把 pending 标失败。FORCE 立刻取消，不等。
+   实测：正常模型 5ms 关完；卡死模型 deadline=2s → **2.57s**（2s + 0.56s 收尾）。
+   那 0.56s 不是 deadline 的一部分，而是**等 worker 从同步 curl 退出**——取消是协作式的，
+   worker 只在 libcurl 进度回调里检查令牌，平均要等半个回调周期；2s 和 10s 两组都多 0.56s，
+   说明它是固定收尾成本。停服前先摘服务发现（pre-stop），避免网关继续把新请求路由到正在退出的节点。
 
 2. **`ClientId` 使用 fd，依赖“任务终态后 `eraseTerminal` 立即移除”**
    当前流程下 fd 复用时旧任务已清理，不会混排。若未来引入长生命周期任务或任务取消，需要替换为不依赖 fd 的唯一 ID。`Connection` 内部使用不可变的 `clientId_`（构造时的 fd），`cancelHook_` 传的是这个值，不受 `finishClose` 之后 `afd_ = -1` 的影响。
