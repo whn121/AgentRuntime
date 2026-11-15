@@ -38,6 +38,51 @@ struct GatewayState
     // 全局requestId 生成器
     std::atomic<uint64_t> next_new_id{1};
 
+    // ── 稳定 new_id 映射 ──
+    // 幂等的唯一性靠"客户端重试时幂等键不变"。但网关会把 requestId 重写成
+    // 全局 new_id；如果每次转发都换新 id，后端就无法识别"同一个请求"。
+    // 所以这里按 (clientId, original_id) 记住最近用过的 new_id，TTL 内复用。
+    //
+    // 边界：clientId 是连接级身份，跨重连会变。跨重连的幂等需要协议里有
+    // 稳定的客户端标识（如客户端生成的 UUID 或查询令牌），当前协议没有。
+    struct RecentIdEntry
+    {
+        uint32_t new_id{0};
+        std::chrono::steady_clock::time_point ts;
+    };
+    std::unordered_map<uint64_t, RecentIdEntry> recent_ids;
+    std::mutex recent_mutex;
+
+    uint32_t ReuseOrAllocNewId(uint64_t client_id, uint32_t original_id)
+    {
+        const uint64_t key = (client_id << 32) | static_cast<uint64_t>(original_id);
+        {
+            std::lock_guard<std::mutex> lock(recent_mutex);
+            auto it = recent_ids.find(key);
+            if (it != recent_ids.end()) return it->second.new_id;
+        }
+
+        const uint64_t id = next_new_id.fetch_add(1);
+        if (id > UINT32_MAX) return 0;
+
+        {
+            std::lock_guard<std::mutex> lock(recent_mutex);
+            recent_ids[key] = RecentIdEntry{static_cast<uint32_t>(id),
+                                            std::chrono::steady_clock::now()};
+        }
+        return static_cast<uint32_t>(id);
+    }
+
+    void CleanupRecentIds(std::chrono::steady_clock::time_point now, std::chrono::seconds ttl)
+    {
+        std::lock_guard<std::mutex> lock(recent_mutex);
+        for (auto it = recent_ids.begin(); it != recent_ids.end(); )
+        {
+            if (now - it->second.ts > ttl) it = recent_ids.erase(it);
+            else ++it;
+        }
+    }
+
     // ── 探活 id ──
     // 问题：以前用"类型 == HEARTBEAT_RESP"来识别"网关自己的探活回包"，
     // 但客户端自己的心跳响应也是这个类型，于是被网关吞掉，客户端永远收不到。

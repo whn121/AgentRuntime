@@ -214,24 +214,25 @@ int main(int argc, char* argv[]) try
                 return;
             }
 
-            uint32_t new_id = 0;
-            uint32_t original_id = msg.id_;
+            const uint32_t original_id = msg.id_;
+            if (!backend->isConnected())
+            {
+                conn->sendResponse(MyMessage{MyType::ERROR_RESP, original_id, "BACKEND_DISCONNECTED"});
+                return;
+            }
+
+            // 稳定 new_id：TTL 内同一 (clientId, original_id) 复用同一个 id，
+            // 这样客户端重试传到后端的幂等键不变，后端的唯一键/状态机才能识别"同一个请求"。
+            const uint32_t new_id = state->ReuseOrAllocNewId(conn->clientId(), original_id);
+            if (new_id == 0)
+            {
+                conn->sendResponse(MyMessage{MyType::ERROR_RESP, original_id, "REQUEST_ID_EXHAUSTED"});
+                return;
+            }
             {
                 std::lock_guard<std::mutex> lock(state->pending_mutex);
-                // 在当前进程内绝不复用 ID，包括已超时的 ID：迟来的应答不会引发问题
-                auto id = state->next_new_id.fetch_add(1);
-                if (id > UINT32_MAX) 
-                {
-                    conn->sendResponse(MyMessage{MyType::ERROR_RESP, original_id, "REQUEST_ID_EXHAUSTED"});
-                    return;
-                }
-                new_id = static_cast<uint32_t>(id);
-                if (!backend->isConnected()) 
-                {
-                    conn->sendResponse(MyMessage{MyType::ERROR_RESP, original_id, "BACKEND_DISCONNECTED"});
-                    return;
-                }
-                state->pending.emplace(new_id, PendingRequest{conn, backend, original_id, std::chrono::steady_clock::now()});
+                // 覆盖旧条目：同一 new_id 的重复请求，用最新连接接收响应
+                state->pending[new_id] = PendingRequest{conn, backend, original_id, std::chrono::steady_clock::now()};
             }
 
             // 4.重写requestId
@@ -633,6 +634,9 @@ int main(int argc, char* argv[]) try
                     }
                 }
             }
+
+            // 顺带清理过期的 new_id 映射（TTL 60s）
+            state->CleanupRecentIds(now, std::chrono::seconds(60));
 
             // 锁外发超时响应
             for (auto& [client, orig_id] : timeouts)

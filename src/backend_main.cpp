@@ -301,14 +301,48 @@ int main(int argc, char* argv[]) try
             // 用逻辑 clientId（不是 fd）：fd 会被内核复用，不能当身份。
             const auto clientId = conn->clientId();
 
-            // 幂等受理（可选）：同一 request_id 只受理一次。
-            // 一次 INSERT 占位在业务线程完成（~0.2ms），不进引擎队列。
-            if (config.db_dedup && task_store &&
-                !task_store->TryClaim(requestId, clientId, clientId))
+            // 幂等受理（状态机版）：
+            //   第一次 / 失败未超上限 → 执行
+            //   正在执行            → TASK_PROCESSING（不重复执行）
+            //   已有终态            → 直接返回结果
+            //   超过重试上限        → RETRY_EXCEEDED
+            if (config.db_dedup && task_store)
             {
-                conn->sendRaw(MyProtocol::encodeMessage(
-                    MyType::RUNTIME_TASK_FAILED, requestId, "DUPLICATE_REQUEST"));
-                return;
+                const auto claim = task_store->TryClaim(requestId, clientId, clientId);
+                switch (claim.outcome)
+                {
+                case store::ClaimOutcome::New:
+                case store::ClaimOutcome::Retry:
+                    break;   // 继续执行
+
+                case store::ClaimOutcome::Processing:
+                    conn->sendRaw(MyProtocol::encodeMessage(
+                        MyType::RUNTIME_TASK_FAILED, requestId, "TASK_PROCESSING"));
+                    return;
+
+                case store::ClaimOutcome::Done:
+                    if (claim.record.status == store::TaskStatus::Succeeded)
+                    {
+                        conn->sendRaw(MyProtocol::encodeMessage(
+                            MyType::RUNTIME_TASK_RESP, requestId, claim.record.result));
+                    }
+                    else
+                    {
+                        conn->sendRaw(MyProtocol::encodeMessage(
+                            MyType::RUNTIME_TASK_FAILED, requestId,
+                            claim.record.error.empty() ? "TASK_ALREADY_FINISHED" : claim.record.error));
+                    }
+                    return;
+
+                case store::ClaimOutcome::Rejected:
+                    conn->sendRaw(MyProtocol::encodeMessage(
+                        MyType::RUNTIME_TASK_FAILED, requestId, "RETRY_EXCEEDED"));
+                    return;
+
+                case store::ClaimOutcome::Error:
+                    // DB 故障：降级为"不启用 dedup"，继续执行，不丢请求
+                    break;
+                }
             }
 
             // 查询令牌：在业务线程（work 池）算，不占 IO 线程。
@@ -366,6 +400,12 @@ int main(int argc, char* argv[]) try
                     }
                 }
             });
+
+            if (accepted && task_store && config.db_dedup)
+            {
+                // 状态机：Pending -> Running；失败说明已被别的请求领走
+                task_store->MarkRunning(requestId);
+            }
 
             // 受理回执：任务还没跑就先回一帧，把查询令牌交给客户端。
             // 否则客户端在任务完成前断线，就永远拿不到令牌、之后也查不到结果。

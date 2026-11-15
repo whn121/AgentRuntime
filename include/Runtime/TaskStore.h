@@ -29,18 +29,35 @@ namespace store
         uint64_t session_id{0};
         uint64_t client_id{0};
         TaskStatus status{TaskStatus::Pending};
+        int attempt{0};
         std::string result;
         std::string error;
     };
 
-    // 任务持久化 + 幂等 + 会话计数 + 缓存。
+    // 受理结果：把"重复提交"从二值改成有语义的状态机。
     //
-    // 四件事各自解决一个真问题：
-    //   1) 幂等（TryClaim）：同一 request_id 只受理一次，事务里"插任务 + 会话计数+1"；
-    //   2) 会话计数：agent_session.task_count，和任务插入在【同一事务】，不会出现
-    //      "任务有了但计数没加"；
-    //   3) 终态落库：异步写（队列满丢弃计数），不拖慢引擎线程；
-    //   4) 缓存：cache-aside（先更库、再删缓存），空结果也缓存（防穿透）。
+    //   New        —— 第一次受理，应该执行
+    //   Retry      —— 上次失败且未超重试上限，允许重新领取
+    //   Processing —— 正在执行（Pending/Running），不要重复执行
+    //   Done       —— 已有终态，直接返回结果
+    //   Rejected   —— 失败且超过重试上限
+    //   Error      —— DB 不可用等内部错误
+    enum class ClaimOutcome
+    {
+        New,
+        Retry,
+        Processing,
+        Done,
+        Rejected,
+        Error
+    };
+
+    struct ClaimResult
+    {
+        ClaimOutcome outcome{ClaimOutcome::Error};
+        TaskRecord record;   // Done/Processing/Rejected 时带状态
+    };
+
     class TaskStore
     {
     public:
@@ -54,9 +71,19 @@ namespace store
         bool Ready() const { return ready_; }
         const std::string& Error() const { return error_; }
 
-        // 受理：幂等占位 + 会话计数（同一事务）。
-        // 返回 false 表示重复提交（已存在该 request_id）。
-        bool TryClaim(uint32_t request_id, uint64_t session_id, uint64_t client_id);
+        // 幂等受理（状态机版）：
+        //   1) 第一次 → 插 Pending，attempt=1，会话计数+1（同一事务）
+        //   2) 已存在：
+        //      Succeeded/Cancelled → Done（返回结果）
+        //      Pending/Running     → Processing
+        //      Failed 且 attempt < max_attempts → 原子改回 Pending、attempt+1 → Retry
+        //      Failed 且 attempt >= max_attempts → Rejected
+        ClaimResult TryClaim(uint32_t request_id, uint64_t session_id, uint64_t client_id,
+                             int max_attempts = 3);
+
+        // 执行前原子领取：Pending → Running。
+        // 返回 false 表示被别人领走或已不在 Pending（防两个线程同时执行）。
+        bool MarkRunning(uint32_t request_id);
 
         void SubmitTerminal(uint32_t request_id, uint64_t session_id, uint64_t client_id,
                             TaskStatus status, const std::string& result, const std::string& error);
@@ -69,6 +96,7 @@ namespace store
         std::uint64_t FailedWrites() const { return failed_writes_.load(); }
         std::uint64_t CacheHits() const { return cache_hits_.load(); }
         std::uint64_t CacheMisses() const { return cache_misses_.load(); }
+        std::uint64_t Retries() const { return retries_.load(); }
 
         static constexpr std::size_t kMaxQueue = 4096;
 
@@ -76,6 +104,8 @@ namespace store
         void WriterLoop();
         bool WriteOne(const TaskRecord& rec);
         bool EnsureSchema();
+        bool EnsureColumn(const char* table, const char* column, const char* ddl);
+        bool ReadRecord(MYSQL* conn, uint32_t request_id, TaskRecord& out);
         void CacheInvalidate(uint32_t request_id);
 
         std::shared_ptr<db::MySQLPool> pool_;
@@ -94,5 +124,6 @@ namespace store
         std::atomic<std::uint64_t> failed_writes_{0};
         std::atomic<std::uint64_t> cache_hits_{0};
         std::atomic<std::uint64_t> cache_misses_{0};
+        std::atomic<std::uint64_t> retries_{0};
     };
 }

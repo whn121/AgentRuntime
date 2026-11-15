@@ -36,8 +36,16 @@ C++17 实现的推理任务运行时：在 Reactor 网络底座上构建 Gateway
     EXPLAIN 扫描行数 **100000 → 1**，平均延迟 **10.87ms → 0.274ms（-97.5%）**。
   - **缓存一致性**：cache-aside——先更库、再删缓存；未命中回填 TTL 60s，
     **空结果也缓存**（TTL 10s）防穿透。实测同一 id 二次查询 **1.06ms → 0.28ms**。
-  - **幂等**：`--db-dedup` 提交前 `TryClaim`（唯一键占位，业务线程 ~0.2ms），
-    重复提交返回 `DUPLICATE_REQUEST`；实测第二次提交被拒、`task_count` 只 +1。
+  - **幂等（状态机版）**：`--db-dedup` 提交前 `TryClaim`（唯一键占位 + 状态机，业务线程 ~0.2ms）：
+    首次 → 执行；`Pending/Running` → `TASK_PROCESSING`；`Succeeded` → **直接返回已有结果**；
+    `Failed` 且 `attempt < 3` → 原子改回 Pending、`attempt+1` 重试；`attempt >= 3` → `RETRY_EXCEEDED`。
+    执行前 `MarkRunning` 用 `UPDATE ... WHERE status=0` 原子领取，防止两个线程同时执行。
+    实测：重复提交返回同一结果、DB 只有一行且 `attempt=1`、会话计数只 +1；重试上限用例通过。
+  - **跨网关幂等（稳定 new_id）**：网关按 `(clientId, original_id)` 在 60s TTL 内复用同一个 `new_id`，
+    这样客户端重试传到后端的幂等键不变。实测同一连接重复提交只执行一次（DB 一行、attempt=1）。
+    **边界**：`clientId` 是连接级身份，跨重连会变；跨重连幂等需要协议里有稳定客户端标识（当前没有）。
+  - **进度语义（明确边界）**：持久化只保证"任务级状态"，不保证"任务内部多步操作的原子性"。
+    模型调用不可续跑，重试 = 从头重放；若任务含业务副作用，必须由业务侧提供幂等接口（或事务/Saga）。
 
 - **任务持久化（MySQL，可选）**：Agent 任务可能跑几十秒，客户端断开后结果就丢了。
   现在终态（成功/失败/取消）异步落到 `agent_task` 表，客户端重连后可按 `request_id` 查结果（幂等）。
