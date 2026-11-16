@@ -56,8 +56,12 @@ namespace store
     }
 
     TaskStore::TaskStore(std::shared_ptr<db::MySQLPool> pool,
-                         std::shared_ptr<RedisPool> redis)
-        : pool_(std::move(pool)), redis_(std::move(redis))
+                         std::shared_ptr<RedisPool> redis,
+                         int task_timeout_sec,
+                         int reap_interval_sec)
+        : pool_(std::move(pool)), redis_(std::move(redis)),
+          task_timeout_sec_(task_timeout_sec),
+          reap_interval_sec_(reap_interval_sec > 0 ? reap_interval_sec : 60)
     {
         if (!pool_ || !pool_->Valid())
         {
@@ -303,6 +307,32 @@ namespace store
         cv_.notify_one();
     }
 
+    void TaskStore::ReapStale()
+    {
+        if (!ready_ || task_timeout_sec_ <= 0) return;
+
+        auto conn = pool_->Acquire();
+        if (!conn) return;
+
+        // 只清 Pending/Running：终态行不动。timeout 必须大于最长任务耗时，
+        // 否则会把仍在执行的任务误标失败。
+        const std::string sql =
+            "UPDATE agent_task SET status=3, error='TASK_TIMEOUT' "
+            "WHERE status IN (0,1) AND updated_at < NOW(3) - INTERVAL " +
+            std::to_string(task_timeout_sec_) + " SECOND";
+
+        if (::mysql_query(conn.get(), sql.c_str()) != 0)
+        {
+            LOG_WARN(std::string("[TaskStore] reap failed: ") + ::mysql_error(conn.get()));
+            return;
+        }
+        const auto n = ::mysql_affected_rows(conn.get());
+        if (n > 0)
+        {
+            LOG_WARN("[TaskStore] reaped " + std::to_string(n) + " stale task(s)");
+        }
+    }
+
     void TaskStore::WriterLoop()
     {
         for (;;)
@@ -310,7 +340,15 @@ namespace store
             TaskRecord rec;
             {
                 std::unique_lock<std::mutex> lock(mutex_);
-                cv_.wait(lock, [this] { return stop_ || !queue_.empty(); });
+                const bool ready = cv_.wait_for(lock, std::chrono::seconds(reap_interval_sec_),
+                    [this] { return stop_ || !queue_.empty(); });
+                if (!ready)
+                {
+                    if (stop_) break;
+                    lock.unlock();
+                    ReapStale();          // 周期性回收孤儿任务
+                    continue;
+                }
                 if (queue_.empty())
                 {
                     if (stop_) break;

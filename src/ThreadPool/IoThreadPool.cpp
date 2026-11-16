@@ -1,11 +1,14 @@
 #include "ThreadPool/IoThreadPool.h"
+#include "Common/Config.h"
 #include "Net/Connection.h"
 #include "Logger/AsyncLogger.h"
 #include <future>
 #include <utility>
 
 
-IoThreadPool::IoThreadPool(int num) : num_(num > 0 ? num : 8)
+IoThreadPool::IoThreadPool(int num)
+    : num_(num > 0 ? num : 8),
+      max_connections_(static_cast<size_t>(Config::instance().max_connections))
 {
     // 第二步: 创造所以Eventloop
     for (int i = 0; i < num_; ++i)
@@ -37,6 +40,15 @@ void IoThreadPool::submit(int afd)
     if (!loop->runInLoop([this, loop, afd, workCallback = workCallback_]
     {
         if (!loop->acceptsConnections()) { ::close(afd); return; }
+
+        // 连接数上限：在 loop 线程里判断，计数与连接生命周期一致
+        if (max_connections_ > 0 && active_connections_.load(std::memory_order_relaxed) >= max_connections_)
+        {
+            ::close(afd);
+            LOG_WARN("[IoThreadPool] max connections reached; reject new fd");
+            return;
+        }
+        active_connections_.fetch_add(1, std::memory_order_relaxed);
         // 连接工厂已解耦到上层（buildconn_），此处不再直接创建协议对象
 
         if (buildconn_)
@@ -44,7 +56,12 @@ void IoThreadPool::submit(int afd)
             auto conn = buildconn_ (afd, loop);
 
             conn->init();
-            conn->setcloseCallback([this, loop](int fd) { if (closeCallback_) closeCallback_(fd); loop->removeConnection(fd); });;
+            conn->setcloseCallback([this, loop](int fd)
+            {
+                active_connections_.fetch_sub(1, std::memory_order_relaxed);
+                if (closeCallback_) closeCallback_(fd);
+                loop->removeConnection(fd);
+            });
             conn->setCallBack(workCallback);
 
             // 注入业务处理器

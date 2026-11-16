@@ -72,6 +72,11 @@ C++17 实现的推理任务运行时：在 Reactor 网络底座上构建 Gateway
   "unknown id" 被丢掉（实测：开启 `--query-secret` 后第一个响应是回执，第二个是结果）。
 - **准入限流**：每连接令牌桶（容量 200、补充 100/s），超限直接回 `RUNTIME_TASK_FAILED + "RATE_LIMITED"`。限流点在**业务线程**的 handler 里，不占 IO 线程、也不占 `RuntimeEngine` 队列。用令牌桶而不是固定窗口，是为了避免窗口交界处放过 2N 个请求。
 - **关闭路径**：统一 `closeCallbackPending_` 认领入口，停服时连接清理恰好一次；`EventLoop` 退出时对残余连接强制关闭兜底；对单连接回调异常隔离，防止 `bad_alloc` 拖垮进程。两种模式：`GRACEFUL` = **drain + deadline**（先不取消，等任务自然完成，超 deadline 才取消剩余），`FORCE` = 立刻取消 + 清空 pending。停服前先做 **pre-stop 摘流量**：删除 Redis 租约并等待 `--deregister-wait-ms`（默认 2000）让网关刷新，再进入 drain——否则网关在租约过期前仍会把新请求路由到正在退出的节点（实测租约 0.2s 内删除，进程继续 drain）。
+- **连接数上限（`--max-connections`，默认 4096）**：在 IO loop 线程内判断，超过直接关闭新 fd，
+  不等 EMFILE 才崩；计数随连接生命周期增减，不会泄漏。
+- **孤儿任务回收（`--task-timeout-sec` 默认 1800，`--task-reap-interval-sec` 默认 60）**：
+  写线程周期性把 `Pending/Running` 超过 timeout 未更新的行标为 `Failed/TASK_TIMEOUT`，
+  避免进程崩溃后 DB 里永久残留。timeout 必须大于最长任务耗时。
 - **可观测性**：新增 9 个运行时指标（队列深度、拒绝原因、活跃任务数、发送队列峰值），叠加原有连接/请求/字节计数器和 Connection 构造/析构计数；发送侧软背压 8MB/2MB 双水位，64MB 硬水位兜底。
 
 ## 实测数据（`bench/`，2026-11-07）

@@ -48,6 +48,8 @@ private:
     int num_;
     std::function<TaskQueue::PushResult(Task&&)> workCallback_;          // 投递给工作线程池
     std::atomic<size_t> next_{0};                      // 轮询计数器
+    size_t max_connections_{0};                        // 0 = 不限
+    std::atomic<size_t> active_connections_{0};
     //{}给成员就地初始化列表
 
     //为了解耦io不知道协议类型,在acceptor里完成io执行回调

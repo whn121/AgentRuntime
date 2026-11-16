@@ -62,7 +62,9 @@ namespace store
     {
     public:
         explicit TaskStore(std::shared_ptr<db::MySQLPool> pool,
-                           std::shared_ptr<RedisPool> redis = nullptr);
+                           std::shared_ptr<RedisPool> redis = nullptr,
+                           int task_timeout_sec = 0,
+                           int reap_interval_sec = 60);
         ~TaskStore();
 
         TaskStore(const TaskStore&) = delete;
@@ -102,6 +104,8 @@ namespace store
 
     private:
         void WriterLoop();
+        // 把 Pending/Running 超过 task_timeout_sec_ 的任务标 Failed（防孤儿行）
+        void ReapStale();
         bool WriteOne(const TaskRecord& rec);
         bool EnsureSchema();
         bool EnsureColumn(const char* table, const char* column, const char* ddl);
@@ -118,6 +122,8 @@ namespace store
         std::deque<TaskRecord> queue_;
         bool stop_{false};
         std::thread writer_;
+        int task_timeout_sec_{0};
+        int reap_interval_sec_{60};
 
         std::atomic<std::uint64_t> written_{0};
         std::atomic<std::uint64_t> dropped_{0};

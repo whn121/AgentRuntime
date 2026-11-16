@@ -176,7 +176,8 @@ int main(int argc, char* argv[]) try
         {
             // 任务状态缓存（cache-aside）复用 Redis：先更库、再删缓存
             auto redis_pool = std::make_shared<RedisPool>(config.redis_host, config.redis_port, 2);
-            task_store = std::make_shared<store::TaskStore>(mysql_pool, redis_pool);
+            task_store = std::make_shared<store::TaskStore>(mysql_pool, redis_pool,
+                config.task_timeout_sec, config.task_reap_interval_sec);
             if (!task_store->Ready())
             {
                 std::cerr << "[Backend] task persistence disabled: " << task_store->Error() << '\n';

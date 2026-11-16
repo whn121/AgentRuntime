@@ -10,6 +10,13 @@ struct Config
     int io_threads = 8;          // I/O 线程池大小（子 Reactor 数量）
     int work_threads = 4;        // 业务线程池大小
 
+    // 连接数上限（0 = 不限制）；超过直接关闭新 fd，避免被打到 EMFILE 才崩
+    int max_connections = 4096;
+
+    // 任务回收：Pending/Running 超过该秒数未更新则标 Failed（0 = 关闭）
+    int task_timeout_sec = 1800;
+    int task_reap_interval_sec = 60;
+
     // RuntimeEngine 的执行线程数。这两个线程会阻塞在 HTTP 调用上，
     // 因此它是"并发在途模型调用"的上限，也是压测中最常见的瓶颈点。
     int engine_workers = 2;
