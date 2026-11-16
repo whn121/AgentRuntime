@@ -65,6 +65,11 @@ C++17 实现的推理任务运行时：在 Reactor 网络底座上构建 Gateway
     （回执令牌/重连查询/取消可查/无令牌/错令牌/跨请求令牌/不存在 id），
     未启用鉴权 4 个用例（向后兼容，返回 NOT_FOUND）。
 
+- **查询令牌绑定客户端 id（跨网关修复）**：网关转发任务时在 payload 前加 `o:<original_id>|`，
+  后端用它做幂等键（`agent_task.request_id`）和 `HMAC(secret, "query:"+id)`；
+  帧头 id 仍用网关的 new_id 做回包路由。这样**跨重连、跨网关重启**都能验签与查库。
+- **受理回执不算终态**：网关收到 `TASK_ACCEPTED` 时**不删除** pending，否则后续终态响应会变成
+  "unknown id" 被丢掉（实测：开启 `--query-secret` 后第一个响应是回执，第二个是结果）。
 - **准入限流**：每连接令牌桶（容量 200、补充 100/s），超限直接回 `RUNTIME_TASK_FAILED + "RATE_LIMITED"`。限流点在**业务线程**的 handler 里，不占 IO 线程、也不占 `RuntimeEngine` 队列。用令牌桶而不是固定窗口，是为了避免窗口交界处放过 2N 个请求。
 - **关闭路径**：统一 `closeCallbackPending_` 认领入口，停服时连接清理恰好一次；`EventLoop` 退出时对残余连接强制关闭兜底；对单连接回调异常隔离，防止 `bad_alloc` 拖垮进程。两种模式：`GRACEFUL` = **drain + deadline**（先不取消，等任务自然完成，超 deadline 才取消剩余），`FORCE` = 立刻取消 + 清空 pending。停服前先做 **pre-stop 摘流量**：删除 Redis 租约并等待 `--deregister-wait-ms`（默认 2000）让网关刷新，再进入 drain——否则网关在租约过期前仍会把新请求路由到正在退出的节点（实测租约 0.2s 内删除，进程继续 drain）。
 - **可观测性**：新增 9 个运行时指标（队列深度、拒绝原因、活跃任务数、发送队列峰值），叠加原有连接/请求/字节计数器和 Connection 构造/析构计数；发送侧软背压 8MB/2MB 双水位，64MB 硬水位兜底。

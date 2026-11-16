@@ -151,7 +151,12 @@ int main(int argc, char* argv[]) try
                     if (it != state->pending.end() && it->second.backend_conn.lock() == conn)
                     {
                         req = it->second;
-                        state->pending.erase(it);
+                        // 受理回执（TASK_ACCEPTED）不是终态：保留 pending，
+                        // 否则后续的终态响应会变成 "unknown id" 被丢掉。
+                        if (msg.type_ != MyType::TASK_ACCEPTED)
+                        {
+                            state->pending.erase(it);
+                        }
                         found = true;
                     }
                 }
@@ -236,6 +241,12 @@ int main(int argc, char* argv[]) try
             }
 
             // 4.重写requestId
+            // 把客户端原始 id 透传给后端：幂等键和查询令牌都绑它（跨重连稳定），
+            // 帧头 id 仍用 new_id 做回包路由。
+            if (msg.type_ == MyType::RUNTIME_TASK_REQ)
+            {
+                msg.payload_ = "o:" + std::to_string(original_id) + "|" + msg.payload_;
+            }
             msg.id_ = new_id;
 
             // 5.转发到后端

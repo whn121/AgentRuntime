@@ -313,8 +313,28 @@ int main(int argc, char* argv[]) try
             
             // 将任务提交给长期运行的 RuntimeEngine，异步执行。
             // 保存连接和客户端请求 ID，以便任务完成后返回原请求的响应。
-            const auto requestId = request.id_;
-            const auto input = request.payload_;
+            const auto requestId = request.id_;   // 帧头 id（网关的 new_id），只用于回包路由
+            std::string input = request.payload_;
+            uint32_t db_id = requestId;            // 直连后端时没有前缀，用帧头 id
+
+            // 网关会在 payload 前加 "o:<original_id>|"：幂等键与查询令牌都绑客户端 id，
+            // 这样跨重连 / 跨网关重启都能验签与查库。
+            if (input.rfind("o:", 0) == 0)
+            {
+                const auto bar = input.find('|');
+                if (bar != std::string::npos)
+                {
+                    try
+                    {
+                        db_id = static_cast<uint32_t>(std::stoul(input.substr(2, bar - 2)));
+                    }
+                    catch (...)
+                    {
+                        db_id = requestId;
+                    }
+                    input = input.substr(bar + 1);
+                }
+            }
 
             // 用逻辑 clientId（不是 fd）：fd 会被内核复用，不能当身份。
             const auto clientId = conn->clientId();
@@ -368,14 +388,14 @@ int main(int argc, char* argv[]) try
             // 用 HMAC 而不是随机数：服务端不用存 token 表，验签时重算一次即可（无状态）。
             const std::string query_token = config.query_secret.empty()
                 ? std::string()
-                : crypto::MakeQueryToken(requestId, config.query_secret);
+                : crypto::MakeQueryToken(db_id, config.query_secret);
 
             // ★ 这里刻意【不做】限流。
             // 后端看到的连接是网关的复用连接（一条连接承载所有客户端流量），
             // 按连接限流会把整片流量误判成"单客户端超速"——压测实测：50 客户端
             // 10 秒只有 630 个成功（= 3 条后端连接 × 210）。
             // 客户端准入限流只在网关做（见 gateway_main.cpp），维度才对。
-            const bool accepted = runtimeEngine.submit(clientId, input, [conn, requestId, clientId, task_store, query_token]
+            const bool accepted = runtimeEngine.submit(clientId, input, [conn, requestId, db_id, clientId, task_store, query_token]
                 (const std::shared_ptr<runtime::RuntimeTask>& task, runtime::WorkerExecutionResult result)
             {
                 // 关闭期间连接可能已经进了 Closing, sendResponse 会静默丢掉
@@ -395,7 +415,7 @@ int main(int argc, char* argv[]) try
                     // 引擎线程不能被一次 DB 写拖住。
                     if (task_store)
                     {
-                        task_store->SubmitTerminal(requestId, clientId, clientId,
+                        task_store->SubmitTerminal(db_id, clientId, clientId,
                             store::TaskStatus::Succeeded, task->result(), "");
                     }
                 }
@@ -414,7 +434,7 @@ int main(int argc, char* argv[]) try
                         const auto st = (error == "CLIENT_DISCONNECTED")
                             ? store::TaskStatus::Cancelled
                             : store::TaskStatus::Failed;
-                        task_store->SubmitTerminal(requestId, clientId, clientId, st, "", error);
+                        task_store->SubmitTerminal(db_id, clientId, clientId, st, "", error);
                     }
                 }
             });
@@ -422,7 +442,7 @@ int main(int argc, char* argv[]) try
             if (accepted && task_store && config.db_dedup)
             {
                 // 状态机：Pending -> Running；失败说明已被别的请求领走
-                task_store->MarkRunning(requestId);
+                task_store->MarkRunning(db_id);
             }
 
             // 受理回执：任务还没跑就先回一帧，把查询令牌交给客户端。
@@ -440,7 +460,7 @@ int main(int argc, char* argv[]) try
 
                 if (task_store)
                 {
-                    task_store->SubmitTerminal(requestId, clientId, clientId,
+                    task_store->SubmitTerminal(db_id, clientId, clientId,
                         store::TaskStatus::Failed, "", "TASK_SUBMISSION_FAILED");
                 }
             }
