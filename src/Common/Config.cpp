@@ -39,6 +39,7 @@ void Config::parseArgs(int argc, char* argv[])
         {"db-dedup", no_argument, 0, 'J'},
         {"deregister-wait-ms", required_argument, 0, 'I'},
         {"max-connections", required_argument, 0, 'X'},
+        {"static-backends", required_argument, 0, 'V'},
         {"task-timeout-sec", required_argument, 0, 'Y'},
         {"task-reap-interval-sec", required_argument, 0, 'Z'},
         {"help",       no_argument,       0, 'h'},
@@ -60,7 +61,7 @@ void Config::parseArgs(int argc, char* argv[])
     optind = 1;
     int opt;
     // 循环解析参数，直到返回 -1
-    while ((opt = getopt_long(argc, argv, "p:i:w:E:B:L:G:T:S:D:b:r:R:H:P:U:W:N:K:J:I:X:Y:Z:h", long_options, nullptr)) != -1)
+    while ((opt = getopt_long(argc, argv, "p:i:w:E:B:L:G:T:S:D:b:r:R:H:P:U:W:N:K:J:I:X:Y:Z:V:h", long_options, nullptr)) != -1)
     {
         switch (opt) 
         {
@@ -90,6 +91,7 @@ void Config::parseArgs(int argc, char* argv[])
             case 'J': db_dedup = true; break;
             case 'I': deregister_wait_ms = std::max(0, std::atoi(optarg)); break;
             case 'X': max_connections = std::max(0, std::atoi(optarg)); break;
+            case 'V': static_backends = optarg; break;
             case 'Y': task_timeout_sec = std::max(0, std::atoi(optarg)); break;
             case 'Z': task_reap_interval_sec = std::max(1, std::atoi(optarg)); break;
             case 'h':

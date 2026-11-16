@@ -10,6 +10,7 @@
 #include "Gateway/GatewayState.h"
 
 #include <iostream>
+#include <sstream>
 #include <memory>
 #include <any>
 #include <vector>
@@ -60,6 +61,26 @@ int main(int argc, char* argv[]) try
     const auto& cfg = Config::instance();
     auto redis_pool = std::make_shared<RedisPool>(cfg.redis_host, cfg.redis_port, 4);
     ServiceRegistry registry(redis_pool, "backend_service");
+
+    // 服务发现兜底：Redis 不可用时用 --static-backends 的静态列表启动
+    if (!Config::instance().static_backends.empty())
+    {
+        std::vector<ServiceInstance> seeds;
+        std::stringstream ss(Config::instance().static_backends);
+        std::string item;
+        while (std::getline(ss, item, ','))
+        {
+            const auto pos = item.find(':');
+            if (pos == std::string::npos) continue;
+            ServiceInstance inst;
+            inst.service_name = "backend_service";
+            inst.instance_id = "static-" + item;
+            inst.host = item.substr(0, pos);
+            inst.port = static_cast<uint16_t>(std::atoi(item.substr(pos + 1).c_str()));
+            if (inst.port != 0) seeds.push_back(std::move(inst));
+        }
+        registry.SeedStatic(seeds);
+    }
     registry.Start(2);
 
     LOG_INFO("[Gateway] service discovery started, watching backend_service");

@@ -30,6 +30,15 @@ void ServiceRegistry::Start(int refresh_interval_sec)
     });
 }
 
+void ServiceRegistry::SeedStatic(const std::vector<ServiceInstance>& seeds)
+{
+    if (seeds.empty()) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!instances_.empty()) return;
+    instances_ = seeds;
+    LOG_WARN("ServiceRegistry: seeded " + std::to_string(instances_.size()) + " static backend(s)");
+}
+
 void ServiceRegistry::Stop()
 {
     std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
@@ -134,9 +143,31 @@ std::vector<ServiceInstance> ServiceRegistry::GetSnapshot() const
     }
 
     // 4.更新本地缓存
+    // 防误删：Redis 重启/数据丢失会返回空列表；连续 3 次空才接受，
+    // 否则保留上一份快照（最多 3×2s=6s 的恢复窗口）。
+    if (new_instances.empty())
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!instances_.empty())
+        {
+            ++empty_streak_;
+            if (empty_streak_ < 3)
+            {
+                LOG_WARN("ServiceRegistry: empty snapshot (" + std::to_string(empty_streak_) +
+                         "/3), keep previous " + std::to_string(instances_.size()) + " instance(s)");
+                return;
+            }
+            LOG_ERROR("ServiceRegistry: empty snapshot for 3 consecutive rounds; clear instances");
+        }
+        instances_.clear();
+        empty_streak_ = 0;
+        return;
+    }
+
     {
         std::lock_guard<std::mutex> lock(mutex_);
         instances_ = std::move(new_instances);
+        empty_streak_ = 0;
     }
 
     LOG_INFO("ServiceRegistry refreshed: " + std::to_string(Size()) + " instances");

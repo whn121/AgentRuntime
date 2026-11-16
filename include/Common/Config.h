@@ -13,6 +13,9 @@ struct Config
     // 连接数上限（0 = 不限制）；超过直接关闭新 fd，避免被打到 EMFILE 才崩
     int max_connections = 4096;
 
+    // 服务发现兜底：Redis 不可用时的静态后端列表（host:port,host:port）
+    std::string static_backends;
+
     // 任务回收：Pending/Running 超过该秒数未更新则标 Failed（0 = 关闭）
     int task_timeout_sec = 1800;
     int task_reap_interval_sec = 60;
