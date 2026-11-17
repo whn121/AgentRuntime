@@ -347,7 +347,7 @@ int main(int argc, char* argv[]) try
             //   超过重试上限        → RETRY_EXCEEDED
             if (config.db_dedup && task_store)
             {
-                const auto claim = task_store->TryClaim(requestId, clientId, clientId);
+                const auto claim = task_store->TryClaim(db_id, clientId, clientId);
                 switch (claim.outcome)
                 {
                 case store::ClaimOutcome::New:

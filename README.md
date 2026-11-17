@@ -28,7 +28,7 @@ C++17 实现的推理任务运行时：在 Reactor 网络底座上构建 Gateway
 - **网络层**：Reactor + epoll + eventfd + timerfd，IO/Worker 两级线程池，主 EventLoop 负责 accept，多个子 EventLoop 各自绑定线程，`runInLoop` 保证跨线程投递时的线程归属。
 - **网关**：Redis 服务注册发现（TTL 10s，心跳 3s），轮询负载均衡，请求 ID 重写 + pending 表关联，心跳与健康检查，超时清理。
 - **调度**：`Scheduler` 按客户端轮转 + 单客户端配额 256，避免一个连接独占队列；`RuntimeEngine` 有界待调度队列（默认 1024）。
-- **取消**：`RuntimeEngine::stop()` 通过 `CancellationToken` 传播至 `LlamaClient`，基于 libcurl `XFERINFOFUNCTION` **周期性**检查。注意延迟的**上界是一个进度回调周期（约 1 秒）**，实测一次 108ms 属于恰好接近回调时刻，不能当作普遍值。客户端断开时，**所有关闭路径**（`close()` / 读错误 / 写错误 / 协议错误 / `forceCloseOnLoopStop`）统一在 `handleClose` 的 CAS 成功后通过 `notifyCancelOnce()` 触发一次 `cancelHook_`，使用不可变的 `clientId_`（构造时的 fd），不依赖 `finishClose` 之后的 `afd_`。
+- **取消**：`RuntimeEngine::stop()` 通过 `CancellationToken` 传播至 `LlamaClient`，基于 libcurl `XFERINFOFUNCTION` **周期性**检查。实测取消等待稳定在 **约 0.56s**（libcurl 进度回调周期约 0.5s），因此 2s deadline 的停服实测 **2.57s = 2s + 0.56s**；取消延迟本身不随 deadline 变。客户端断开时，**所有关闭路径**（`close()` / 读错误 / 写错误 / 协议错误 / `forceCloseOnLoopStop`）统一在 `handleClose` 的 CAS 成功后通过 `notifyCancelOnce()` 触发一次 `cancelHook_`，使用不可变的 `clientId_`（构造时的 fd），不依赖 `finishClose` 之后的 `afd_`。
 - **存储子系统补强（会话/事务/索引/缓存/幂等）**：把"落库"升级成能讲 DB 深度的子系统
   - **会话表 + 事务**：`agent_session.task_count` 与任务插入在**同一事务**（`TryClaim`），
     避免"任务存在但计数丢失"；不需要分布式事务，因为两表同库。
@@ -93,7 +93,7 @@ WSL2 / Ubuntu 24.04 / GCC 13.3 / Release，1 Gateway + 3 Backend + 多线程假�
 | 吞吐（200 连接 × 60s，8 engine worker） | **2512 QPS**，p50 78.5ms / p95 92.9ms / p99 102.0ms，0 失败 |
 | 引擎扩容线性度 | 2→4 worker：**1025 → 2053 QPS（2.0×）**；8 之后饱和于 ~2400 |
 | 故障注入（kill 1/3 后端） | **0 请求失败**，30 个错误帧（1.9‰），p99 无劣化 |
-| 停服（20 次，模型卡死 300s） | **median 700ms / p95 711ms**（对比 `TIMEOUT_MS=120s`） |
+| 停服（20 次，模型卡死 300s） | deadline 2s → **median 2.57s**；deadline 10s → 10.56s；FORCE → 0.6s |
 | 背压（只发不收） | 125k 请求 / 约 128MB 未读响应后连接被断开，进程存活 |
 
 完整方法与边界见 `bench/REPORT.md`；复现见 `./bench/run_bench.sh`。
@@ -115,7 +115,7 @@ Client ──TCP──▶ Gateway ──TCP──▶ Backend ──▶ RuntimeEn
 | 问题 | 方案 |
 |---|---|
 | 一个连接独占调度队列 | `Scheduler` 按客户端轮转取出，单客户端配额 256 |
-| 服务关闭时阻塞 120s | `CancellationToken` + libcurl 进度回调，实测 108ms 退出 |
+| 服务关闭时阻塞 120s | deadline 兜底 + 进度回调取消；取消等待约 0.56s，2s deadline 总停服 2.57s |
 | 客户端断开后 pending 任务继续跑 | 所有关闭路径统一在 `handleClose` 中 `notifyCancelOnce()`，用不可变 `clientId_`；`RuntimeEngine::cancelByClient` 标记 `CLIENT_DISCONNECTED` |
 | 关闭路径的重复清理 / 悬挂 | `finalizeCloseIfPending` 单一认领入口 + `EventLoop` 退出兜底 |
 | 单连接回调异常拖垮进程 | `EventLoop::loop` 内 `handleEvent` 加 try/catch，异常连接走 `close()` |
@@ -152,7 +152,7 @@ cmake --build build-tsan -j && ctest --test-dir build-tsan --output-on-failure
 > **TSan 在这台机器上必须先关掉 ASLR**：直接跑会有 11 个用例报
 > `FATAL: ThreadSanitizer: unexpected memory mapping 0x...`，这是新内核 ASLR 与 TSan
 > shadow 内存冲突，**不是数据竞争**。用 `setarch $(uname -m) -R ctest ...` 包一层即可，
-> 关掉 ASLR 后 15/15 全过、零 race 报告。
+> 关掉 ASLR 后 12/12 全过、零 race 报告。
 
 ## 运行
 
@@ -197,7 +197,7 @@ ctest --test-dir build-asan --output-on-failure
 见上）；Release 0 error、0 warning。端到端链路与四个故障场景实测输出归档在 `results/`：
 
 - `e2e_success.txt` —— Gateway → Backend → RuntimeEngine → 假 Qwen → 客户端，`type=5` 正常返回；
-- `cancel_latency.txt` —— 关闭时取消在途模型调用：20 次实测 **median 700ms / p95 711ms**（对比 120s 超时兜底）；
+- `cancel_latency.txt` —— 关闭时取消在途模型调用：2s deadline 实测 **median 2.57s**（2s + 0.56s 回调等待）；FORCE 0.6s；
 - `queue_overflow.txt` —— 队列满载时部分请求返回 `TASK_SUBMISSION_FAILED`，4 个槽位内正常执行；
 - `client_disconnect.txt` —— 客户端发送后立即断开，后续请求正常，服务不崩。
 
@@ -247,7 +247,7 @@ ctest --test-dir build-asan --output-on-failure
    统一拒绝语义（发 `ERROR_RESP` 再关）推迟。需要“关闭前发送最后一帧”的机制，涉及 `handleClose` 和 `sendQueue_` 的交互。
 
 5. **取消在真实网络阻塞场景的边界未做完整实测**
-   只测了“服务端接受连接但永不响应”场景。TLS 握手、DNS 解析卡住等路径的取消耗时取决于 libcurl 内部行为，108ms 不能外推。
+   只测了“服务端接受连接但永不响应”场景。TLS 握手、DNS 解析卡住等路径的取消耗时取决于 libcurl 内部行为，0.56s 是回调周期下限，不能外推。
 
 6. **所有关闭路径统一在 `handleClose` 中触发一次 `cancelHook_`**
    `handleClose` 的 CAS 成功后调用 `notifyCancelOnce()`，用不可变的 `clientId_`（构造时的 fd）而非 `afd_`——`finishClose` 之后 `afd_` 已被置 -1。`cancelHookCalled_` 的 CAS 保证只调一次。`close()` 本身不再调 `cancelHook_`，因为此时 `state_` 还是 `Connected`，`completion` 回调里 `sendResponse` 会发出无效的 `CLIENT_DISCONNECTED` 响应。`forceCloseOnLoopStop()` 也单独调用 `notifyCancelOnce()`——这条路径不经过 `handleClose`，但需要统一取消语义。
@@ -302,7 +302,7 @@ ctest --test-dir build-asan --output-on-failure
 - **修复**：改成断言"守恒"——每个任务要么成功、要么被取消，不能丢、不能重复：
   `succeeded >= 1 && cancelled >= 1 && succeeded + cancelled == 6`。
 - **顺带说明**：这不是产品 bug。把断言换成打印后，`succeeded + cancelled` 恒为 6，
-  说明取消链路没有丢任务。修完 Release 15/15。
+  说明取消链路没有丢任务。修完 Release 12/12。
 
 ### 6. `read()` 返回值告警
 
@@ -313,7 +313,7 @@ ctest --test-dir build-asan --output-on-failure
 
 ### 7. TSan 已实跑
 
-- **结果**：`-DENABLE_TSAN=ON` 构建成功，`setarch $(uname -m) -R ctest` 下 15/15 通过，
+- **结果**：`-DENABLE_TSAN=ON` 构建成功，`setarch $(uname -m) -R ctest` 下 12/12 通过，
   **没有任何 data race 报告**。
 - **注意**：不关 ASLR 会有 11 个用例报 `unexpected memory mapping`，那是内核/Tsan 的
   环境问题，不要误判成代码有竞争。
@@ -321,7 +321,7 @@ ctest --test-dir build-asan --output-on-failure
 ### 仍然没做的（别在面试里说做了）
 
 - **`LlamaClient` 的真实阻塞路径只测了一种**：只测了"服务端接受连接但永不响应"，
-  TLS 握手、DNS 解析卡住时 `700ms` 不能外推。
+  TLS 握手、DNS 解析卡住时 `0.56s` 不能外推。
 - **跨网关高可用、TLS、跨节点调度**：没做。
 - **没有长时间稳定性测试**：压测最长 60 秒（`bench/REPORT.md`），没有小时级/天级的 soak 测试，内存是否线性增长没有观测。
 
