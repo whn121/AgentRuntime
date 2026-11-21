@@ -42,9 +42,9 @@ C++17 实现的推理任务运行时：在 Reactor 网络底座上构建 Gateway
   - **会话表 + 事务**：`agent_session.task_count` 与任务插入在**同一事务**（`TryClaim`），
     避免"任务存在但计数丢失"；不需要分布式事务，因为两表同库。
   - **索引实验**（`tools/index_bench.cpp`）：10 万行下 `WHERE client_id=? AND created_at>?`，
-    EXPLAIN 扫描行数 **100000 → 1**，平均延迟 **10.87ms → 0.274ms（-97.5%）**。
+    EXPLAIN 扫描行数 **100163 → 50**，查询耗时 **4.02ms → 0.25ms（-94%）**。
   - **缓存一致性**：cache-aside——先更库、再删缓存；未命中回填 TTL 60s，
-    **空结果也缓存**（TTL 10s）防穿透。实测同一 id 二次查询 **1.06ms → 0.28ms**。
+    **空结果也缓存**（TTL 10s）防穿透。早期实测同一 id 二次查询 **1.06ms → 0.28ms**（本次未重跑）。
   - **幂等（状态机版）**：`--db-dedup` 提交前 `TryClaim`（唯一键占位 + 状态机，业务线程 ~0.2ms）：
     首次 → 执行；`Pending/Running` → `TASK_PROCESSING`；`Succeeded` → **直接返回已有结果**；
     `Failed` 且 `attempt < 3` → 原子改回 Pending、`attempt+1` 重试；`attempt >= 3` → `RETRY_EXCEEDED`。
