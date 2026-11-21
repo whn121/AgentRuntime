@@ -72,3 +72,5 @@ build_bench/
 build_asan/
 build-asan/
 *.log
+build_bench/
+build_bench2/
