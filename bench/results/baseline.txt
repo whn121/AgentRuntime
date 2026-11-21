@@ -1,1 +1,1 @@
-total=24284 ok=24284 failed=0 other=0 qps=2423.3 p50=20.2 p95=26.6 p99=33.3 max=49.7
+total=149576 ok=149576 failed=0 other=0 qps=2489.3 p50=78.7 p95=95.9 p99=108.8 max=143.8

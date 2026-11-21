@@ -65,6 +65,8 @@ class H(BaseHTTPRequestHandler):
 class S(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 512
+    def handle_error(self, request, client_address):
+        pass   # 后端被 kill 时客户端断开，忽略 BrokenPipe
 
 S(('127.0.0.1', $MODEL_PORT), H).serve_forever()
 PY
