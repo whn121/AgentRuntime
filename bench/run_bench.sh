@@ -325,8 +325,8 @@ case "${1:-all}" in
     ratelimit) build_binaries && phase_ratelimit "${2:-50}" "${3:-10}" ;;
     leak) build_binaries && phase_leak "${2:-50}" "${3:-10}" ;;
     emfile) build_binaries && phase_emfile ;;
-    baseline) build_binaries && phase_baseline "${2:-50}" "${3:-10}" ;;
-    fault) build_binaries && phase_fault "${2:-50}" "${3:-10}" ;;
+    baseline) build_binaries && phase_baseline "${2:-200}" "${3:-60}" ;;
+    fault) build_binaries && phase_fault "${2:-200}" "${3:-60}" ;;
     backpressure) build_binaries && phase_backpressure ;;
     shutdown) build_binaries && phase_shutdown ;;
     all) build_binaries && phase_sweep 50 10 && phase_baseline 200 60 \
