@@ -218,6 +218,7 @@ int main(int argc, char** argv)
     for (int i = 1; i < argc; ++i)
     {
         const std::string k = argv[i];
+        if (k == "-h" || k == "--help") { print_usage(); return 0; }
         auto next = [&](const char* what) -> std::string {
             if (i + 1 >= argc) { std::fprintf(stderr, "missing value for %s\n", what); std::exit(2); }
             return argv[++i];

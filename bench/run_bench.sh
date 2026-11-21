@@ -11,7 +11,7 @@
 #   ./bench/run_bench.sh all                # sweep + baseline + fault + backpressure + shutdown
 #
 # 环境变量:
-#   ENGINE_WORKERS   后端 RuntimeEngine 线程数（默认 2）
+#   ENGINE_WORKERS   后端 RuntimeEngine 线程数（默认 8）
 #   MODEL_DELAY_MS   假模型延迟毫秒（默认 5）
 #   CONNS / SECONDS  默认 50 / 10
 
@@ -27,7 +27,7 @@ GW_PORT=8080
 BE_PORTS="9001 9002 9003"
 MODEL_PORT=8081
 MODEL_DELAY_MS="${MODEL_DELAY_MS:-5}"
-ENGINE_WORKERS="${ENGINE_WORKERS:-}"
+ENGINE_WORKERS="${ENGINE_WORKERS:-8}"
 
 mkdir -p "$OUT_DIR"
 
