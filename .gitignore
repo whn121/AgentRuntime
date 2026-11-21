@@ -67,3 +67,8 @@ Logger_txt/
 
 .env
 build_bench/
+
+# local build dirs
+build_asan/
+build-asan/
+*.log
