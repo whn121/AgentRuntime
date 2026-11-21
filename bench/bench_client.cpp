@@ -275,16 +275,17 @@ int main(int argc, char** argv)
     const long responses = total.ok + total.rate_limited + total.failed + total.other;
     const double qps = elapsed_s > 0 ? static_cast<double>(responses) / elapsed_s : 0.0;
 
-    std::printf("mode=%s conns=%d seconds=%d payload=%d\n",
-                args.mode.c_str(), args.conns, args.seconds, args.payload);
-    std::printf("total=%ld ok=%ld rate_limited=%ld failed=%ld other=%ld qps=%.1f\n",
-                responses, total.ok, total.rate_limited, total.failed, total.other, qps);
     if (!total.lat_ms.empty())
     {
-        std::printf("lat_ms p50=%.2f p95=%.2f p99=%.2f max=%.2f\n",
+        std::printf("total=%ld ok=%ld failed=%ld other=%ld qps=%.1f p50=%.1f p95=%.1f p99=%.1f max=%.1f\n",
+                    responses, total.ok, total.failed, total.other, qps,
                     pct(0.50), pct(0.95), pct(0.99), total.lat_ms.back());
     }
-    std::printf("sent_bytes=%ld elapsed_s=%.2f\n", total.bytes_sent, elapsed_s);
+    else
+    {
+        std::printf("total=%ld ok=%ld failed=%ld other=%ld qps=%.1f\n",
+                    responses, total.ok, total.failed, total.other, qps);
+    }
 
     if (!args.csv.empty())
     {

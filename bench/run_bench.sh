@@ -299,7 +299,6 @@ PY
         t1=$(date +%s%3N)
         ms=$((t1 - t0))
         echo "$i,$ms" >> "$out"
-        log "shutdown run $i: ${ms}ms"
     done
 
     kill -TERM "$MODEL_PID" 2>/dev/null
