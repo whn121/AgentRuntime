@@ -144,7 +144,7 @@ phase_sweep() {
 }
 
 phase_baseline() {
-    local conns="${1:-50}" secs="${2:-10}"
+    local conns="${1:-200}" secs="${2:-60}"
     start_infra || return 1
     log "baseline: conns=$conns seconds=$secs"
     run_client baseline "$conns" "$secs" 32 closed_loop
@@ -152,7 +152,7 @@ phase_baseline() {
 }
 
 phase_fault() {
-    local conns="${1:-50}" secs="${2:-10}"
+    local conns="${1:-200}" secs="${2:-60}"
     start_infra || return 1
     log "fault: 压测中途 kill 一个 backend"
     ( sleep $((secs / 2)); kill -KILL "$(echo $BE_PIDS | awk '{print $1}')" 2>/dev/null; \
